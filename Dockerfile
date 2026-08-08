@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Multi-stage build: pinned Rust builder, minimal non-root runtime.
 # No secrets are baked in; all runtime configuration comes from the
-# environment (see docs/deployment.md).
+# environment.
 
 FROM rust:1.97.1-bookworm AS builder
 WORKDIR /build

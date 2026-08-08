@@ -1,4 +1,4 @@
-# Local single-replica deployment for gha-cache-proxy (see docs/deployment.md).
+# Local single-replica deployment for gha-cache-proxy.
 # Every interpolation is optional (${VAR:-default}) so `docker compose config`
 # works without any host environment setup. Defaults target local validation
 # only; production values are set by overriding the same variables.
