@@ -6,7 +6,7 @@ set -euo pipefail
 : "${RUNNER_NAME:?RUNNER_NAME is required}"
 : "${RUNNER_LABELS:?RUNNER_LABELS is required}"
 
-caddy_root=/caddy-data/caddy/pki/authorities/local/root.crt
+caddy_root=/runner-ca/root.crt
 for _ in $(seq 1 60); do
   [ -s "$caddy_root" ] && break
   sleep 1
@@ -25,6 +25,5 @@ cd /home/runner
   --url "$RUNNER_URL" \
   --token "$RUNNER_TOKEN" \
   --name "$RUNNER_NAME" \
-  --labels "$RUNNER_LABELS" \
-  --work "${RUNNER_WORKDIR:-_work}"
+  --labels "$RUNNER_LABELS"
 exec ./run.sh

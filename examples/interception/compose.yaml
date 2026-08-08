@@ -3,9 +3,9 @@ services:
     image: chrislusf/seaweedfs:4.41
     command: ["mini", "-dir=/data"]
     environment:
-      AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:-admin}
-      AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-secret}
-      S3_BUCKET: ${S3_BUCKET:-gha-cache}
+      AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY}
+      S3_BUCKET: ${S3_BUCKET}
     volumes:
       - seaweedfs-data:/data
     healthcheck:
@@ -24,14 +24,13 @@ services:
     image: gha-cache-proxy:interception
     environment:
       LISTEN_ADDR: 0.0.0.0:8080
-      PUBLIC_URL: ${PUBLIC_URL:-https://artifactcache.actions.githubusercontent.com}
-      AUTH_TOKEN: ${CACHE_PROXY_AUTH_TOKEN:-}
+      PUBLIC_URL: ${PUBLIC_URL}
+      AUTH_TOKEN: ${CACHE_PROXY_AUTH_TOKEN}
       S3_ENDPOINT: http://seaweedfs:8333
-      S3_BUCKET: ${S3_BUCKET:-gha-cache}
-      S3_REGION: ${S3_REGION:-us-east-1}
-      S3_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID:-admin}
-      S3_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY:-secret}
-      MAX_CACHE_SIZE_BYTES: ${MAX_CACHE_SIZE_BYTES:-10737418240}
+      S3_BUCKET: ${S3_BUCKET}
+      S3_REGION: ${S3_REGION}
+      S3_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID}
+      S3_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY}
     depends_on:
       seaweedfs:
         condition: service_healthy
@@ -43,7 +42,7 @@ services:
   caddy:
     image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
     environment:
-      CACHE_PROXY_AUTH_TOKEN: ${CACHE_PROXY_AUTH_TOKEN:-}
+      - CACHE_PROXY_AUTH_TOKEN
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
@@ -57,22 +56,40 @@ services:
           - artifactcache.actions.githubusercontent.com
           - results-receiver.actions.githubusercontent.com
 
+  caddy-ca:
+    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until [ -s /caddy-data/caddy/pki/authorities/local/root.crt ]; do
+          sleep 1
+        done
+        cp /caddy-data/caddy/pki/authorities/local/root.crt /runner-ca/root.crt
+        chmod 0444 /runner-ca/root.crt
+    volumes:
+      - caddy-data:/caddy-data:ro
+      - runner-ca:/runner-ca
+    depends_on:
+      caddy:
+        condition: service_started
+    networks:
+      - cache
+
   runner:
     build:
       context: .
       dockerfile: Dockerfile
     image: gha-cache-interception-runner:2.336.0
     environment:
-      RUNNER_URL: ${RUNNER_URL:-}
-      RUNNER_TOKEN: ${RUNNER_TOKEN:-}
-      RUNNER_NAME: ${RUNNER_NAME:-gha-cache-interception}
-      RUNNER_LABELS: ${RUNNER_LABELS:-gha-cache-interception}
-      RUNNER_WORKDIR: ${RUNNER_WORKDIR:-_work}
+      - RUNNER_URL
+      - RUNNER_TOKEN
+      - RUNNER_NAME
+      - RUNNER_LABELS
     volumes:
-      - caddy-data:/caddy-data:ro
+      - runner-ca:/runner-ca:ro
     depends_on:
-      caddy:
-        condition: service_started
+      caddy-ca:
+        condition: service_completed_successfully
       proxy:
         condition: service_started
     networks:
@@ -83,6 +100,7 @@ volumes:
   seaweedfs-data:
   caddy-data:
   caddy-config:
+  runner-ca:
 
 networks:
   cache:

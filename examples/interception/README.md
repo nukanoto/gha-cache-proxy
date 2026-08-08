@@ -23,12 +23,18 @@ Create a repository or organization runner registration token, then start the ex
 ```sh
 export RUNNER_URL=https://github.com/example/project
 export RUNNER_TOKEN=replace-with-a-runner-registration-token
+export RUNNER_NAME=gha-cache-interception
+export RUNNER_LABELS=gha-cache-interception
+export PUBLIC_URL=https://artifactcache.actions.githubusercontent.com
 export CACHE_PROXY_AUTH_TOKEN=replace-with-an-internal-cache-token
+export SEAWEEDFS_ACCESS_KEY_ID=admin
+export SEAWEEDFS_SECRET_ACCESS_KEY=secret
+export S3_BUCKET=gha-cache
+export S3_REGION=us-east-1
 docker compose -f examples/interception/compose.yaml up --build
 ```
 
-The runner label defaults to `gha-cache-interception`.
-Use that label in a workflow:
+Set `RUNNER_LABELS` to `gha-cache-interception` and use that label in a workflow:
 
 ```yaml
 jobs:
@@ -78,7 +84,8 @@ Resolve the intercepted hostnames to the Caddy address from the runner and every
 
 `tls internal` creates a Caddy local CA.
 Persist Caddy's `/data` directory so the CA does not change after a restart.
-Copy its root certificate from the Caddy container and install it in the runner image:
+The Compose example copies the generated certificate into a readable runner volume.
+For a separately managed runner, copy the root certificate from the Caddy container and install it in the runner image:
 
 ```sh
 docker cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
