@@ -296,8 +296,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn コンテントレンジの解析が正しい() {
-        println!("Content-Range ヘッダの解析を確認");
+    fn content_range_parsing_is_correct() {
+        println!("Verify Content-Range header parsing");
         assert_eq!(parse_content_range("bytes 0-1023/*"), Some((0, 1023)));
         assert_eq!(
             parse_content_range("bytes 1024-2047/2048"),
@@ -312,8 +312,8 @@ mod tests {
     }
 
     #[test]
-    fn コンテントレンジのインクルーシブ長がオーバーフローしない() {
-        println!("Content-Range の長さ計算がオーバーフロー時に拒否されることを確認");
+    fn content_range_length_rejects_overflow() {
+        println!("Verify that Content-Range length rejects overflow");
         assert_eq!(content_range_len("bytes 0-1023/*"), Some(1024));
         assert_eq!(content_range_len("bytes 5-5/*"), Some(1));
         assert_eq!(content_range_len("bytes 0-18446744073709551615/*"), None);
@@ -325,8 +325,8 @@ mod tests {
     }
 
     #[test]
-    fn チャンクキーからオフセットを取り出せる() {
-        println!("チャンクオブジェクトのキーからオフセットを取り出すことを確認");
+    fn chunk_key_yields_offset() {
+        println!("Verify that a chunk object key yields its offset");
         let key = "ns/staging/7/chunks/4096";
         let offset: u64 = key.rsplit('/').next().unwrap().parse().unwrap();
         assert_eq!(offset, 4096);

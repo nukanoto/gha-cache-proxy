@@ -535,8 +535,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn プロトバフリクエストのラウンドトリップが壊れない() {
-        println!("プロトバフのリクエストエンコードとデコードが内容を保持することを確認");
+    fn protobuf_request_round_trip_preserves_contents() {
+        println!("Verify that protobuf request encoding and decoding preserve contents");
         let req = CreateCacheEntryRequest {
             metadata: Some(CacheMetadata {
                 repository_id: 42,
@@ -571,8 +571,8 @@ mod tests {
     }
 
     #[test]
-    fn レスポンスのjsonはlower_camel_case名で出力される() {
-        println!("レスポンスJSONがprotobuf JSONのlowerCamelCase名で出力されることを確認");
+    fn response_json_uses_lower_camel_case_names() {
+        println!("Verify that response JSON uses protobuf lowerCamelCase names");
         let resp = CreateCacheEntryResponse {
             ok: true,
             signed_upload_url: "https://example/artifacts/x".into(),
@@ -594,8 +594,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn jsonレスポンスのentry_idは文字列になる() {
-        println!("JSONレスポンスのentryIdがint64のため文字列として出力されることを確認");
+    async fn response_json_encodes_entry_id_as_a_string() {
+        println!("Verify that JSON response entryId is encoded as a string for int64");
         let resp = FinalizeCacheEntryUploadResponse {
             ok: true,
             entry_id: 99,
@@ -611,8 +611,8 @@ mod tests {
     }
 
     #[test]
-    fn jsonリクエストはcamel_caseエイリアスを受け付ける() {
-        println!("JSONリクエストがlowerCamelCaseのエイリアスを受け付けることを確認");
+    fn json_request_accepts_camel_case_aliases() {
+        println!("Verify that JSON requests accept lowerCamelCase aliases");
         let value: serde_json::Value = serde_json::json!({
             "key": "k",
             "version": "v",
@@ -627,8 +627,8 @@ mod tests {
     }
 
     #[test]
-    fn jsonリクエストのフィールド抽出が型違いを拒否する() {
-        println!("JSONリクエストのフィールド抽出が欠落や型違いを拒否することを確認");
+    fn json_request_rejects_missing_or_wrong_type_fields() {
+        println!("Verify that JSON field extraction rejects missing or wrong-type fields");
         let value: serde_json::Value = serde_json::json!({
             "metadata": {"repository_id": "7"},
             "key": "k",
@@ -651,8 +651,8 @@ mod tests {
     }
 
     #[test]
-    fn レスポンスのプロトバフエンコードが成功する() {
-        println!("レスポンスをプロトバフでエンコードできることを確認");
+    fn response_encodes_as_protobuf() {
+        println!("Verify that the response can be encoded as protobuf");
         let resp = FinalizeCacheEntryUploadResponse {
             ok: true,
             entry_id: 99,

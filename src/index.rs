@@ -547,8 +547,8 @@ mod tests {
     }
 
     #[test]
-    fn プライマリキーは完全一致で最新が選ばれる() {
-        println!("プライマリキー完全一致で作成日時が最新のエントリが返ることを確認");
+    fn primary_key_returns_newest_exact_match() {
+        println!("Verify that an exact primary-key match returns the newest entry");
         let entries = vec![
             entry(1, "linux-abc", "v1", 100),
             entry(2, "linux-abc", "v1", 200),
@@ -558,8 +558,8 @@ mod tests {
     }
 
     #[test]
-    fn 復元キーはプレフィックス一致が順序どおり試される() {
-        println!("復元キーのプレフィックス一致が指定順で試されることを確認");
+    fn restore_keys_try_prefixes_in_order() {
+        println!("Verify that restore-key prefixes are tried in order");
         let entries = vec![
             entry(1, "linux-main-b", "v1", 100),
             entry(2, "linux-main-a", "v1", 200),
@@ -583,8 +583,8 @@ mod tests {
     }
 
     #[test]
-    fn バージョン不一致と復元キー不一致はミスになる() {
-        println!("バージョン不一致や復元キー不一致ではミスになることを確認");
+    fn version_or_restore_mismatch_is_a_miss() {
+        println!("Verify that version and restore-key mismatches are misses");
         let entries = vec![entry(1, "linux-abc", "v1", 100)];
         assert!(lookup(&entries, "linux-abc", &[], "v2").is_none());
         assert!(lookup(&entries, "linux-abc", &[], "v1").is_some());
@@ -593,8 +593,8 @@ mod tests {
     }
 
     #[test]
-    fn カバレッジ検証は隙間重複超過を検出する() {
-        println!("チャンクのカバレッジ検証が不正な組み合わせを検出することを確認");
+    fn coverage_rejects_gaps_overlaps_and_excess() {
+        println!("Verify that chunk coverage rejects gaps, overlaps, and excess");
         assert!(validate_coverage(&[(0, 10)], 10));
         assert!(validate_coverage(&[(0, 4), (4, 6)], 10));
         assert!(!validate_coverage(&[(1, 4)], 4)); // Does not start at zero
@@ -607,8 +607,8 @@ mod tests {
     }
 
     #[test]
-    fn キーとバージョンの検証ルールがクライアントと一致する() {
-        println!("キーとバージョンの検証ルールがクライアント側の制約と一致することを確認");
+    fn key_and_version_validation_matches_the_client() {
+        println!("Verify that key and version validation matches client constraints");
         assert!(validate_key("a".repeat(512).as_str()));
         assert!(!validate_key("a".repeat(513).as_str()));
         assert!(!validate_key("a,b"));
@@ -618,8 +618,8 @@ mod tests {
     }
 
     #[test]
-    fn キー長はutf16コード単位で数える() {
-        println!("キー長の検証がJavaScriptと同じUTF-16コード単位で数えることを確認");
+    fn key_length_counts_utf16_code_units() {
+        println!("Verify that key length uses UTF-16 code units like JavaScript");
         assert_eq!(utf16_len("a"), 1);
         assert_eq!(utf16_len("あ"), 1); // One code unit despite three UTF-8 bytes
         assert_eq!(utf16_len("😀"), 2); // A surrogate pair uses two code units
@@ -634,8 +634,8 @@ mod tests {
     }
 
     #[test]
-    fn 予約はttl超過で失効扱いになる() {
-        println!("予約がTTLを超えると失効扱いになることを確認");
+    fn reservation_expires_after_ttl() {
+        println!("Verify that a reservation expires after its TTL");
         let idx = Index {
             next_id: 1,
             entries: vec![],
@@ -647,8 +647,8 @@ mod tests {
     }
 
     #[test]
-    fn 予約消失時の完了判定が冪等成功と孤立を区別する() {
-        println!("予約消失時の完了判定が同一サイズの冪等成功と孤立アーカイブを区別することを確認");
+    fn completion_distinguishes_idempotent_success_from_orphan() {
+        println!("Verify that completion distinguishes idempotent success from an orphan archive");
         let idx = Index {
             next_id: 2,
             entries: vec![entry(7, "k", "v", 100)],
@@ -669,8 +669,8 @@ mod tests {
     }
 
     #[test]
-    fn ステージング予算の置換差分が正しい() {
-        println!("ステージング予算が同一パートの置換を差分で計上することを確認");
+    fn staging_budget_accounts_for_replacement_delta() {
+        println!("Verify that the staging budget accounts for replacement deltas");
         assert_eq!(apply_staged_delta(100, 30, 50), 120); // Replacement adds 20
         assert_eq!(apply_staged_delta(100, 30, 200), 270);
         assert_eq!(apply_staged_delta(100, 200, 50), 0); // Shrink saturates at zero
@@ -680,16 +680,16 @@ mod tests {
     }
 
     #[test]
-    fn 旧形式インデックスの予約は予算ゼロで読み込める() {
-        println!("staged_bytes を持たない旧形式インデックスが読み込めることを確認");
+    fn legacy_index_reservation_loads_with_zero_budget() {
+        println!("Verify that a legacy index reservation loads with zero budget");
         let json = r#"{"id":1,"key":"k","version":"v","created_at":100,"protocol":"v1"}"#;
         let r: Reservation = serde_json::from_str(json).unwrap();
         assert_eq!(r.staged_bytes, 0);
     }
 
     #[test]
-    fn インデックスのjsonラウンドトリップが壊れない() {
-        println!("インデックスのJSON保存と復元が内容を保持することを確認");
+    fn index_json_round_trip_preserves_contents() {
+        println!("Verify that an index JSON round trip preserves its contents");
         let idx = Index {
             next_id: 3,
             entries: vec![entry(1, "k", "v", 100)],

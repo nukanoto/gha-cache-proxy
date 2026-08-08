@@ -325,8 +325,8 @@ mod tests {
     }
 
     #[test]
-    fn キーは名前空間の配下に生成される() {
-        println!("キー生成が名前空間プレフィックスを持つことを確認");
+    fn key_is_prefixed_by_namespace() {
+        println!("Verify that generated keys use the namespace prefix");
         let store = Store::new(test_client(), "bucket".into(), "ns".into());
         assert_eq!(store.index_key(), "ns/index.json");
         assert_eq!(store.chunk_key(7, 0), "ns/staging/7/chunks/0");

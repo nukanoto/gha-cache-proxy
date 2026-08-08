@@ -560,24 +560,24 @@ mod tests {
     }
 
     #[test]
-    fn 署名トークンのラウンドトリップが成功する() {
-        println!("署名トークンが検証を通過することを確認");
+    fn signed_token_round_trip_succeeds() {
+        println!("Verify that a signed token passes round-trip validation");
         let token = sign(&key(), Mode::Download, 42, 3600, 1000);
         assert_eq!(verify(&key(), &token, 1000), Some((Mode::Download, 42)));
         assert_eq!(verify(&key(), &token, 4599), Some((Mode::Download, 42)));
     }
 
     #[test]
-    fn 期限切れトークンは拒否される() {
-        println!("期限切れトークンが拒否されることを確認");
+    fn expired_token_is_rejected() {
+        println!("Verify that an expired token is rejected");
         let token = sign(&key(), Mode::Upload, 7, 60, 1000);
         assert_eq!(verify(&key(), &token, 1060), Some((Mode::Upload, 7)));
         assert_eq!(verify(&key(), &token, 1061), None);
     }
 
     #[test]
-    fn 改ざんトークンとゴミは拒否される() {
-        println!("改ざんトークンと不正な文字列が拒否されることを確認");
+    fn tampered_tokens_and_garbage_are_rejected() {
+        println!("Verify that tampered tokens and garbage are rejected");
         let token = sign(&key(), Mode::Upload, 7, 60, 1000);
         let mut bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&token)
@@ -591,8 +591,8 @@ mod tests {
     }
 
     #[test]
-    fn モードはトークンに固定される() {
-        println!("アップロード用トークンはダウンロードに使えないことを確認");
+    fn token_mode_is_fixed() {
+        println!("Verify that an upload token cannot be used for download");
         let token = sign(&key(), Mode::Upload, 7, 60, 1000);
         assert_eq!(verify(&key(), &token, 1050), Some((Mode::Upload, 7)));
         let (mode, _) = verify(&key(), &token, 1050).unwrap();
@@ -600,8 +600,8 @@ mod tests {
     }
 
     #[test]
-    fn レンジヘッダの解析が正しい() {
-        println!("Range ヘッダの解析を確認");
+    fn range_header_parsing_is_correct() {
+        println!("Verify Range header parsing");
         assert_eq!(parse_range("bytes=0-99", 1000), Ok(Some((0, 99))));
         assert_eq!(parse_range("bytes=100-199", 1000), Ok(Some((100, 199))));
         assert_eq!(parse_range("bytes=0-", 1000), Ok(Some((0, 999))));
@@ -617,8 +617,8 @@ mod tests {
     }
 
     #[test]
-    fn ブロックリストxmlの解析が正しい() {
-        println!("ブロックリストXMLの解析を確認");
+    fn blocklist_xml_parsing_is_correct() {
+        println!("Verify blocklist XML parsing");
         let xml = r#"<?xml version="1.0" encoding="utf-8"?><BlockList><Latest>YmxvY2stMQ==</Latest><Latest>YmxvY2stMg==</Latest></BlockList>"#;
         assert_eq!(
             parse_blocklist(xml.as_bytes()).unwrap(),
