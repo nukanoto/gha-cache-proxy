@@ -22,36 +22,60 @@ It does not call the GitHub control plane or any upstream cache service, so cach
 
 ## Requirements
 
-- Docker Engine with the Docker Compose plugin.
-- An S3-compatible object store such as MinIO.
+- Docker Engine.
+- An S3-compatible object store such as SeaweedFS.
 - A runner or network proxy that can route cache service requests to `PUBLIC_URL`.
 - Rust 1.97.1 or later when building outside Docker.
 
 ## Installation
 
-The included Compose file starts the proxy and a persistent local MinIO instance.
+The proxy stores objects in a dedicated SeaweedFS S3 bucket.
+The following commands start a single-node SeaweedFS instance and the proxy without a Compose file:
 
 ```sh
-docker compose up -d --build
-curl -fsS http://localhost:8080/healthz
+docker network create gha-cache
+docker volume create seaweedfs-data
+
+docker run -d --name gha-cache-seaweedfs --network gha-cache \
+  -p 8333:8333 \
+  -v seaweedfs-data:/data \
+  -e AWS_ACCESS_KEY_ID=admin \
+  -e AWS_SECRET_ACCESS_KEY=secret \
+  -e S3_BUCKET=gha-cache \
+  chrislusf/seaweedfs:4.41
+
+docker build -t gha-cache-proxy .
+docker run -d --name gha-cache-proxy --network gha-cache \
+  -p 8080:8080 \
+  -e PUBLIC_URL=http://localhost:8080 \
+  -e AUTH_TOKEN=dev-secret-token \
+  -e S3_ENDPOINT=http://gha-cache-seaweedfs:8333 \
+  -e S3_BUCKET=gha-cache \
+  -e S3_REGION=us-east-1 \
+  -e S3_ACCESS_KEY_ID=admin \
+  -e S3_SECRET_ACCESS_KEY=secret \
+  -e MAX_CACHE_SIZE_BYTES=10485760 \
+  gha-cache-proxy
 ```
 
-Run the protocol smoke test against the running services:
+Check the service and run the protocol smoke test:
 
 ```sh
+curl -fsS http://localhost:8080/healthz
 scripts/smoke.sh
-docker compose restart proxy
+docker restart gha-cache-proxy
 scripts/smoke.sh --after-restart
 ```
 
-Remove the containers and the local MinIO volume when finished:
+The example uses a 10 MiB cache limit so the smoke test can check rejection.
+Override `MAX_CACHE_SIZE_BYTES` with the production limit before deploying.
+Remove the containers and the SeaweedFS volume when finished:
 
 ```sh
-docker compose down -v
+docker rm -f gha-cache-proxy gha-cache-seaweedfs
+docker network rm gha-cache
+docker volume rm seaweedfs-data
 ```
-
-The Compose file uses a 10 MiB cache limit so the smoke test can check rejection.
-Override `MAX_CACHE_SIZE_BYTES` with the production limit before deploying.
 
 ## Configuration
 
@@ -61,9 +85,8 @@ The proxy requires these environment variables when run directly:
 | --- | --- |
 | `PUBLIC_URL` | URL reachable by the runner; used to create signed blob URLs. |
 | `AUTH_TOKEN` | Bearer token accepted by the control APIs. |
-| `CACHE_NAMESPACE` | Namespace that isolates cache metadata and objects. |
-| `S3_ENDPOINT` | S3-compatible endpoint such as `https://minio.example:9000`. |
-| `S3_BUCKET` | Bucket used for the namespace. |
+| `S3_ENDPOINT` | S3-compatible endpoint such as `https://seaweedfs.example:8333`. |
+| `S3_BUCKET` | Dedicated bucket used by the proxy. |
 | `S3_REGION` | S3 region such as `us-east-1`. |
 | `S3_ACCESS_KEY_ID` | S3 access key. |
 | `S3_SECRET_ACCESS_KEY` | S3 secret key. |
@@ -152,8 +175,8 @@ The proxy accepts both snake_case and lowerCamelCase JSON request fields.
 
 ## Operational boundaries
 
-- Run one proxy replica per shared `CACHE_NAMESPACE` and bucket.
-- Metadata and reservations are stored in one S3 JSON index protected by a process-local lock.
+- Use one proxy replica with one dedicated S3 bucket.
+- Metadata and reservations are stored in one `index.json` object protected by a process-local lock.
 - The proxy does not provide eviction, garbage collection, or automatic cleanup of abandoned staging objects.
 - Cache misses return HTTP 204 for v1 and `ok: false` for v2.
 - Signed blob URLs expire and contain no S3 credentials.
@@ -175,5 +198,5 @@ cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
-The smoke test uses only the local proxy, MinIO, `curl`, and Python's standard library.
+The smoke test uses only the local proxy, SeaweedFS, `curl`, and Python's standard library.
 It does not send requests to GitHub.

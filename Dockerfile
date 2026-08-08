@@ -10,10 +10,9 @@ COPY src/ ./src/
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
-# ca-certificates is needed for TLS S3 endpoints; curl is used by the compose
-# healthcheck only.
+# ca-certificates is needed for TLS S3 endpoints.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates curl \
+    && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --create-home --uid 10001 gha-cache
 COPY --from=builder /build/target/release/gha-cache-proxy /usr/local/bin/gha-cache-proxy

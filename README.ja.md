@@ -22,36 +22,60 @@ GitHub の control plane や upstream の cache service へは接続しないた
 
 ## Requirements
 
-- Docker Engine と Docker Compose plugin。
-- MinIO などの S3 互換 object storage。
+- Docker Engine。
+- SeaweedFS などの S3 互換 object storage。
 - cache service のリクエストを `PUBLIC_URL` へ送れる runner または network proxy。
 - Docker の外で build する場合は Rust 1.97.1 以上。
 
 ## インストール
 
-同梱の Compose file は、プロキシと永続化されたローカル MinIO を起動します。
+プロキシは、専用の SeaweedFS S3 bucket へ object を保存します。
+以下のコマンドで、Compose file を使わずに単一ノードの SeaweedFS とプロキシを起動できます。
 
 ```sh
-docker compose up -d --build
-curl -fsS http://localhost:8080/healthz
+docker network create gha-cache
+docker volume create seaweedfs-data
+
+docker run -d --name gha-cache-seaweedfs --network gha-cache \
+  -p 8333:8333 \
+  -v seaweedfs-data:/data \
+  -e AWS_ACCESS_KEY_ID=admin \
+  -e AWS_SECRET_ACCESS_KEY=secret \
+  -e S3_BUCKET=gha-cache \
+  chrislusf/seaweedfs:4.41
+
+docker build -t gha-cache-proxy .
+docker run -d --name gha-cache-proxy --network gha-cache \
+  -p 8080:8080 \
+  -e PUBLIC_URL=http://localhost:8080 \
+  -e AUTH_TOKEN=dev-secret-token \
+  -e S3_ENDPOINT=http://gha-cache-seaweedfs:8333 \
+  -e S3_BUCKET=gha-cache \
+  -e S3_REGION=us-east-1 \
+  -e S3_ACCESS_KEY_ID=admin \
+  -e S3_SECRET_ACCESS_KEY=secret \
+  -e MAX_CACHE_SIZE_BYTES=10485760 \
+  gha-cache-proxy
 ```
 
-起動中のサービスに対して protocol smoke test を実行します。
+サービスの起動を確認し、protocol smoke test を実行します。
 
 ```sh
+curl -fsS http://localhost:8080/healthz
 scripts/smoke.sh
-docker compose restart proxy
+docker restart gha-cache-proxy
 scripts/smoke.sh --after-restart
 ```
 
-終了時に container とローカル MinIO の volume を削除します。
+この例では、超過時の拒否を smoke test で検証できるよう、キャッシュ上限を 10 MiB に設定しています。
+本番環境では `MAX_CACHE_SIZE_BYTES` を実際の上限へ変更してください。
+終了時に container と SeaweedFS の volume を削除します。
 
 ```sh
-docker compose down -v
+docker rm -f gha-cache-proxy gha-cache-seaweedfs
+docker network rm gha-cache
+docker volume rm seaweedfs-data
 ```
-
-Compose file は、超過時の拒否を smoke test で検証できるよう、キャッシュ上限を 10 MiB に設定しています。
-本番環境では `MAX_CACHE_SIZE_BYTES` を実際の上限へ変更してください。
 
 ## 設定
 
@@ -61,9 +85,8 @@ Compose file は、超過時の拒否を smoke test で検証できるよう、�
 | --- | --- |
 | `PUBLIC_URL` | runner から到達できる URL。署名付き blob URL の生成に使います。 |
 | `AUTH_TOKEN` | control API が受け付ける Bearer token。 |
-| `CACHE_NAMESPACE` | metadata と object を分離する namespace。 |
-| `S3_ENDPOINT` | `https://minio.example:9000` などの S3 互換 endpoint。 |
-| `S3_BUCKET` | namespace に使う bucket。 |
+| `S3_ENDPOINT` | `https://seaweedfs.example:8333` などの S3 互換 endpoint。 |
+| `S3_BUCKET` | プロキシ専用の bucket。 |
 | `S3_REGION` | `us-east-1` などの S3 region。 |
 | `S3_ACCESS_KEY_ID` | S3 access key。 |
 | `S3_SECRET_ACCESS_KEY` | S3 secret key。 |
@@ -152,8 +175,8 @@ JSON request は snake_case と lowerCamelCase の両方を受け付けます。
 
 ## 運用上の境界
 
-- 同じ `CACHE_NAMESPACE` と bucket を共有する proxy は 1 replica にしてください。
-- metadata と予約状態は、process-local lock で保護した 1 個の S3 JSON index に保存します。
+- 1 個の proxy と 1 個の専用 S3 bucket を使ってください。
+- metadata と予約状態は、process-local lock で保護した 1 個の `index.json` object に保存します。
 - eviction、garbage collection、放棄された staging object の自動削除は提供しません。
 - cache miss は v1 では HTTP 204、v2 では `ok: false` で返します。
 - 署名付き blob URL は期限付きで、S3 credential を含みません。
@@ -176,5 +199,5 @@ cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
-smoke test が使うのはローカルの proxy、MinIO、`curl`、Python 標準ライブラリだけです。
+smoke test が使うのはローカルの proxy、SeaweedFS、`curl`、Python 標準ライブラリだけです。
 GitHub へはリクエストを送信しません。

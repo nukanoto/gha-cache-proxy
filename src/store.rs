@@ -1,5 +1,4 @@
-//! Thin S3 wrapper: all keys live under the configured namespace so multiple
-//! deployments can share one bucket without touching each other's objects.
+//! Thin S3 wrapper for the dedicated cache bucket.
 
 use std::error::Error;
 
@@ -74,41 +73,36 @@ pub fn build_client(cfg: &Config) -> S3Client {
 pub struct Store {
     client: S3Client,
     bucket: String,
-    ns: String,
 }
 
 impl Store {
-    pub fn new(client: S3Client, bucket: String, ns: String) -> Self {
-        Self { client, bucket, ns }
-    }
-
-    fn key(&self, rel: &str) -> String {
-        format!("{}/{}", self.ns, rel)
+    pub fn new(client: S3Client, bucket: String) -> Self {
+        Self { client, bucket }
     }
 
     pub fn index_key(&self) -> String {
-        self.key("index.json")
+        "index.json".into()
     }
     pub fn chunk_key(&self, id: u64, offset: u64) -> String {
-        self.key(&format!("staging/{id}/chunks/{offset}"))
+        format!("staging/{id}/chunks/{offset}")
     }
     pub fn block_key(&self, id: u64, block_id: &str) -> String {
-        self.key(&format!("staging/{id}/blocks/{block_id}"))
+        format!("staging/{id}/blocks/{block_id}")
     }
     pub fn staging_blob_key(&self, id: u64) -> String {
-        self.key(&format!("staging/{id}/blob"))
+        format!("staging/{id}/blob")
     }
     pub fn chunk_prefix(&self, id: u64) -> String {
-        self.key(&format!("staging/{id}/chunks/"))
+        format!("staging/{id}/chunks/")
     }
     pub fn block_prefix(&self, id: u64) -> String {
-        self.key(&format!("staging/{id}/blocks/"))
+        format!("staging/{id}/blocks/")
     }
     pub fn staging_prefix(&self, id: u64) -> String {
-        self.key(&format!("staging/{id}/"))
+        format!("staging/{id}/")
     }
     pub fn archive_key(&self, id: u64) -> String {
-        self.key(&format!("archives/{id}"))
+        format!("archives/{id}")
     }
 
     /// Stream a body of a known length into an object.
@@ -238,7 +232,7 @@ impl Store {
         Ok(())
     }
 
-    /// Server-side copy within the bucket (MinIO executes it without proxying bytes).
+    /// Server-side copy within the bucket avoids proxying archive bytes.
     pub async fn copy(&self, src: &str, dst: &str) -> S3Result<()> {
         self.client
             .copy_object()
@@ -313,8 +307,7 @@ mod tests {
             listen_addr: "0.0.0.0:8080".into(),
             public_url: "http://localhost:8080".into(),
             auth_token: "t".into(),
-            namespace: "ns".into(),
-            s3_endpoint: "http://localhost:9000".into(),
+            s3_endpoint: "http://localhost:8333".into(),
             s3_bucket: "bucket".into(),
             s3_region: "us-east-1".into(),
             s3_access_key_id: "a".into(),
@@ -325,13 +318,13 @@ mod tests {
     }
 
     #[test]
-    fn key_is_prefixed_by_namespace() {
-        println!("Verify that generated keys use the namespace prefix");
-        let store = Store::new(test_client(), "bucket".into(), "ns".into());
-        assert_eq!(store.index_key(), "ns/index.json");
-        assert_eq!(store.chunk_key(7, 0), "ns/staging/7/chunks/0");
-        assert_eq!(store.block_key(7, "abc"), "ns/staging/7/blocks/abc");
-        assert_eq!(store.staging_blob_key(7), "ns/staging/7/blob");
-        assert_eq!(store.archive_key(7), "ns/archives/7");
+    fn keys_use_the_dedicated_bucket_layout() {
+        println!("Verify that generated keys use the dedicated bucket layout");
+        let store = Store::new(test_client(), "bucket".into());
+        assert_eq!(store.index_key(), "index.json");
+        assert_eq!(store.chunk_key(7, 0), "staging/7/chunks/0");
+        assert_eq!(store.block_key(7, "abc"), "staging/7/blocks/abc");
+        assert_eq!(store.staging_blob_key(7), "staging/7/blob");
+        assert_eq!(store.archive_key(7), "archives/7");
     }
 }

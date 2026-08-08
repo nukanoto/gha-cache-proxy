@@ -42,7 +42,7 @@ pub async fn caches_get(
         return lookup(&state, &entries, keys, params.get("version"));
     }
     if let Some(key) = params.get("key") {
-        return list(&state, &entries, key);
+        return list(&entries, key);
     }
     json_error(StatusCode::BAD_REQUEST, "missing keys or key parameter")
 }
@@ -84,7 +84,7 @@ fn lookup(
         axum::Json(serde_json::json!({
             "cacheKey": hit.key,
             "version": hit.version,
-            "scope": state.cfg.namespace,
+            "scope": "shared",
             "creationTime": iso8601(hit.created_at),
             "archiveLocation": url,
         })),
@@ -92,7 +92,7 @@ fn lookup(
         .into_response()
 }
 
-fn list(state: &AppState, entries: &[index::Entry], key: &str) -> Response {
+fn list(entries: &[index::Entry], key: &str) -> Response {
     let mut matched: Vec<&index::Entry> =
         entries.iter().filter(|e| e.key.starts_with(key)).collect();
     matched.sort_by(|a, b| b.created_at.cmp(&a.created_at).then(b.id.cmp(&a.id)));
@@ -104,7 +104,7 @@ fn list(state: &AppState, entries: &[index::Entry], key: &str) -> Response {
             "artifactCaches": matched.iter().map(|e| serde_json::json!({
                 "cacheKey": e.key,
                 "cacheVersion": e.version,
-                "scope": state.cfg.namespace,
+                "scope": "shared",
                 "creationTime": iso8601(e.created_at),
             })).collect::<Vec<_>>(),
         })),
@@ -327,7 +327,7 @@ mod tests {
     #[test]
     fn chunk_key_yields_offset() {
         println!("Verify that a chunk object key yields its offset");
-        let key = "ns/staging/7/chunks/4096";
+        let key = "staging/7/chunks/4096";
         let offset: u64 = key.rsplit('/').next().unwrap().parse().unwrap();
         assert_eq!(offset, 4096);
     }

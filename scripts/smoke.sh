@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for gha-cache-proxy against a running compose stack.
+# End-to-end smoke test for gha-cache-proxy against running services.
 # Phase 1 (default): full protocol coverage. Phase 2 (--after-restart):
 # re-verifies persisted entries after the proxy container was restarted.
 # Uses only curl and the Python standard library; never talks to GitHub.
@@ -28,8 +28,8 @@ V2_CREATE="$PROXY_URL/twirp/github.actions.results.api.v1.CacheService/CreateCac
 V2_FINALIZE="$PROXY_URL/twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload"
 V2_GET="$PROXY_URL/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL"
 
-fail() { echo "失敗: $*" >&2; exit 1; }
-pass() { echo "成功: $*"; }
+fail() { echo "FAIL: $*" >&2; exit 1; }
+pass() { echo "PASS: $*"; }
 
 # curl_raw: runs curl, sets STATUS (000 when the connection was reset) and
 # leaves the response body in $WORK/body, headers in $WORK/hdr.

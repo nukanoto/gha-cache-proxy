@@ -28,7 +28,6 @@ pub struct Config {
     pub listen_addr: String,
     pub public_url: String,
     pub auth_token: String,
-    pub namespace: String,
     pub s3_endpoint: String,
     pub s3_bucket: String,
     pub s3_region: String,
@@ -56,7 +55,6 @@ impl Config {
                 .unwrap_or_else(|_| "0.0.0.0:8080".to_string()),
             public_url: required("PUBLIC_URL")?,
             auth_token,
-            namespace: required("CACHE_NAMESPACE")?,
             s3_endpoint: required("S3_ENDPOINT")?,
             s3_bucket: required("S3_BUCKET")?,
             s3_region: required("S3_REGION")?,
@@ -161,11 +159,7 @@ async fn main() {
         }
     };
 
-    let store = store::Store::new(
-        store::build_client(&cfg),
-        cfg.s3_bucket.clone(),
-        cfg.namespace.clone(),
-    );
+    let store = store::Store::new(store::build_client(&cfg), cfg.s3_bucket.clone());
     let index = match index::Index::load(&store).await {
         Ok(i) => i,
         Err(e) => {
@@ -175,9 +169,8 @@ async fn main() {
     };
 
     tracing::info!(
-        "gha-cache-proxy starting: listen={} namespace={} bucket={} endpoint={} max_size_bytes={}",
+        "gha-cache-proxy starting: listen={} bucket={} endpoint={} max_size_bytes={}",
         cfg.listen_addr,
-        cfg.namespace,
         cfg.s3_bucket,
         cfg.s3_endpoint,
         cfg.max_cache_size_bytes
