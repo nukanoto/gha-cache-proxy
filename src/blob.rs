@@ -228,7 +228,7 @@ async fn put_blob(state: &AppState, id: u64, req: Request<Body>) -> Response {
     // Count plain uploads too; otherwise a caller can combine a blob and
     // uncommitted blocks to exceed the per-reservation storage budget.
     let blob_key = state.store.staging_blob_key(id);
-    let old_size = match index::reserve_staging(&state, id, &blob_key, len).await {
+    let old_size = match index::reserve_staging(state, id, &blob_key, len).await {
         Ok(old) => old,
         Err(index::StagingError::NoReservation) => {
             return json_error(StatusCode::NOT_FOUND, "reservation not found");
@@ -251,7 +251,7 @@ async fn put_blob(state: &AppState, id: u64, req: Request<Body>) -> Response {
         Ok(()) => created(),
         Err(e) => {
             tracing::warn!("blob upload to S3 failed: {e}");
-            if let Err(re) = index::release_staging(&state, id, old_size, len).await {
+            if let Err(re) = index::release_staging(state, id, old_size, len).await {
                 tracing::error!("failed to roll back staging budget for reservation {id}: {re}");
             }
             json_error(StatusCode::INTERNAL_SERVER_ERROR, "upload failed")
@@ -291,7 +291,7 @@ async fn put_block(
     // still proceed concurrently because the budget update is serialized only
     // around the check-and-reserve, not the upload itself.
     let block_key = state.store.block_key(id, block_id);
-    let old_size = match index::reserve_staging(&state, id, &block_key, len).await {
+    let old_size = match index::reserve_staging(state, id, &block_key, len).await {
         Ok(old) => old,
         Err(index::StagingError::NoReservation) => {
             return json_error(StatusCode::NOT_FOUND, "reservation not found");
@@ -308,17 +308,13 @@ async fn put_block(
     };
     match state
         .store
-        .put(
-            &block_key,
-            len,
-            Store::upload_stream(req.into_body(), len),
-        )
+        .put(&block_key, len, Store::upload_stream(req.into_body(), len))
         .await
     {
         Ok(()) => created(),
         Err(e) => {
             tracing::warn!("block upload to S3 failed: {e}");
-            if let Err(re) = index::release_staging(&state, id, old_size, len).await {
+            if let Err(re) = index::release_staging(state, id, old_size, len).await {
                 tracing::error!("failed to roll back staging budget for reservation {id}: {re}");
             }
             json_error(StatusCode::INTERNAL_SERVER_ERROR, "block upload failed")

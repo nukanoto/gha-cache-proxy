@@ -212,11 +212,7 @@ pub async fn cache_patch(
     // can never smuggle extra bytes into staging.
     match state
         .store
-        .put(
-            &chunk_key,
-            expected,
-            Store::upload_stream(body, expected),
-        )
+        .put(&chunk_key, expected, Store::upload_stream(body, expected))
         .await
     {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
@@ -320,10 +316,7 @@ mod tests {
         println!("Content-Range の長さ計算がオーバーフロー時に拒否されることを確認");
         assert_eq!(content_range_len("bytes 0-1023/*"), Some(1024));
         assert_eq!(content_range_len("bytes 5-5/*"), Some(1));
-        assert_eq!(
-            content_range_len("bytes 0-18446744073709551615/*"),
-            None
-        );
+        assert_eq!(content_range_len("bytes 0-18446744073709551615/*"), None);
         assert_eq!(content_range_len("bytes 5-1/*"), None);
         assert_eq!(
             content_range_len("bytes 18446744073709551615-18446744073709551615/*"),

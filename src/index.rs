@@ -197,10 +197,7 @@ pub async fn reserve(
         let store = state.store.clone();
         // Reclaim outside the lock; a fresh id keeps the new upload isolated.
         tokio::spawn(async move {
-            if let Err(e) = store
-                .delete_prefix(&store.staging_prefix(stale_id))
-                .await
-            {
+            if let Err(e) = store.delete_prefix(&store.staging_prefix(stale_id)).await {
                 tracing::warn!("stale reservation cleanup failed for {stale_id}: {e}");
             }
         });
@@ -663,7 +660,10 @@ mod tests {
             CompletionOutcome::AlreadyCompleted
         );
         // サイズが異なれば競合
-        assert_eq!(completion_outcome(&idx, 7, 99), CompletionOutcome::SizeConflict);
+        assert_eq!(
+            completion_outcome(&idx, 7, 99),
+            CompletionOutcome::SizeConflict
+        );
         // エントリが無ければ孤立
         assert_eq!(completion_outcome(&idx, 8, 10), CompletionOutcome::Orphan);
     }

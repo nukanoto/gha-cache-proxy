@@ -602,7 +602,9 @@ mod tests {
             message: String::new(),
         };
         let response = respond("application/json", &resp);
-        let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let bytes = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["entryId"], "99");
         assert_eq!(value["ok"], true);
