@@ -582,7 +582,7 @@ mod tests {
         let mut bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD
             .decode(&token)
             .unwrap();
-        bytes[10] ^= 1; // id を 1 ビット反転
+        bytes[10] ^= 1; // Flip one bit of the id
         let tampered = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(&bytes);
         assert_eq!(verify(&key(), &tampered, 1050), None);
         assert_eq!(verify(&key(), "not-a-token", 1050), None);

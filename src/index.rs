@@ -571,7 +571,7 @@ mod tests {
             "v1",
         )
         .expect("2番目の復元キーでヒットするはず");
-        assert_eq!(hit.id, 2); // 同じプレフィックス内では最新
+        assert_eq!(hit.id, 2); // Newest entry within the prefix
         let hit2 = lookup(
             &entries,
             "no-such",
@@ -597,13 +597,13 @@ mod tests {
         println!("チャンクのカバレッジ検証が不正な組み合わせを検出することを確認");
         assert!(validate_coverage(&[(0, 10)], 10));
         assert!(validate_coverage(&[(0, 4), (4, 6)], 10));
-        assert!(!validate_coverage(&[(1, 4)], 4)); // 先頭が0でない
-        assert!(!validate_coverage(&[(0, 4), (5, 6)], 10)); // 隙間
-        assert!(!validate_coverage(&[(0, 4), (3, 6)], 10)); // 重複
-        assert!(!validate_coverage(&[(0, 4)], 10)); // 不足
+        assert!(!validate_coverage(&[(1, 4)], 4)); // Does not start at zero
+        assert!(!validate_coverage(&[(0, 4), (5, 6)], 10)); // Has a gap
+        assert!(!validate_coverage(&[(0, 4), (3, 6)], 10)); // Overlaps
+        assert!(!validate_coverage(&[(0, 4)], 10)); // Is incomplete
         assert!(validate_coverage(&[(0, 4), (4, 4), (8, 4)], 12));
-        assert!(!validate_coverage(&[(0, 4), (4, 0), (4, 8)], 12)); // 0サイズ
-        assert!(validate_coverage(&[], 0)); // 空アップロードは 0 バイトとして有効
+        assert!(!validate_coverage(&[(0, 4), (4, 0), (4, 8)], 12)); // Has a zero-size chunk
+        assert!(validate_coverage(&[], 0)); // Empty upload is valid for zero bytes
     }
 
     #[test]
@@ -621,10 +621,10 @@ mod tests {
     fn キー長はutf16コード単位で数える() {
         println!("キー長の検証がJavaScriptと同じUTF-16コード単位で数えることを確認");
         assert_eq!(utf16_len("a"), 1);
-        assert_eq!(utf16_len("あ"), 1); // 2 バイトだが 1 コード単位
-        assert_eq!(utf16_len("😀"), 2); // サロゲートペアは 2 コード単位
+        assert_eq!(utf16_len("あ"), 1); // One code unit despite three UTF-8 bytes
+        assert_eq!(utf16_len("😀"), 2); // A surrogate pair uses two code units
         assert_eq!(utf16_len("a😀あ"), 4);
-        // 512 バイトを超えても 512 コード単位以内なら有効
+        // More than 512 UTF-8 bytes can still be valid within 512 code units
         assert!(validate_key("あ".repeat(512).as_str()));
         assert!(!validate_key("あ".repeat(513).as_str()));
         assert!(validate_key("😀".repeat(256).as_str()));
@@ -654,29 +654,29 @@ mod tests {
             entries: vec![entry(7, "k", "v", 100)],
             reservations: vec![],
         };
-        // 完了済みエントリと同一サイズなら冪等成功
+        // The same size is an idempotent success for a completed entry
         assert_eq!(
             completion_outcome(&idx, 7, 10),
             CompletionOutcome::AlreadyCompleted
         );
-        // サイズが異なれば競合
+        // A different size is a conflict
         assert_eq!(
             completion_outcome(&idx, 7, 99),
             CompletionOutcome::SizeConflict
         );
-        // エントリが無ければ孤立
+        // No entry means the archive is orphaned
         assert_eq!(completion_outcome(&idx, 8, 10), CompletionOutcome::Orphan);
     }
 
     #[test]
     fn ステージング予算の置換差分が正しい() {
         println!("ステージング予算が同一パートの置換を差分で計上することを確認");
-        assert_eq!(apply_staged_delta(100, 30, 50), 120); // 置換で +20
+        assert_eq!(apply_staged_delta(100, 30, 50), 120); // Replacement adds 20
         assert_eq!(apply_staged_delta(100, 30, 200), 270);
-        assert_eq!(apply_staged_delta(100, 200, 50), 0); // 縮小は飽和
-        assert_eq!(apply_staged_delta(0, 0, 10), 10); // 新規パート
-        assert_eq!(apply_staged_delta(10, 10, 10), 10); // 同一サイズ置換は不変
-        assert_eq!(apply_staged_delta(u64::MAX, 0, u64::MAX), u64::MAX); // 飽和加算
+        assert_eq!(apply_staged_delta(100, 200, 50), 0); // Shrink saturates at zero
+        assert_eq!(apply_staged_delta(0, 0, 10), 10); // New part
+        assert_eq!(apply_staged_delta(10, 10, 10), 10); // Same-size replacement is unchanged
+        assert_eq!(apply_staged_delta(u64::MAX, 0, u64::MAX), u64::MAX); // Addition saturates
     }
 
     #[test]
