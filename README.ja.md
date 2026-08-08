@@ -91,6 +91,43 @@ ACTIONS_RESULTS_URL=https://cache.example.internal
 control plane request には `Authorization: Bearer <AUTH_TOKEN>` を指定します。
 blob request は v1 または v2 API が返す署名付き URL を使うため、Bearer header は必要ありません。
 
+## Runner image への patch
+
+Dockerfile に `ENV ACTIONS_CACHE_URL=...` を追加するだけでは不十分です。
+公式 runner は、各 job の開始時に `SystemVssConnection` の endpoint 情報から `ACTIONS_CACHE_URL` と `ACTIONS_RESULTS_URL` を上書きします。
+
+workflow を変更しない構成では、`actions/runner` に小さな patch を適用した runner image を build します。
+`NodeScriptActionHandler` と `ContainerActionHandler` で、既存の `CacheServerUrl` と `ResultsServiceUrl` の設定後に以下を実行します。
+
+```csharp
+var proxyUrl = System.Environment.GetEnvironmentVariable("GHA_CACHE_PROXY_URL");
+if (!string.IsNullOrWhiteSpace(proxyUrl))
+{
+    var url = proxyUrl.TrimEnd('/') + "/";
+    Environment["ACTIONS_CACHE_URL"] = url;
+    Environment["ACTIONS_RESULTS_URL"] = url;
+}
+```
+
+runner image または runner を起動する controller で、独自の環境変数を設定します。
+
+```text
+GHA_CACHE_PROXY_URL=http://gha-cache-proxy:8080
+```
+
+controller には patch 済み image を指定します。
+
+```yaml
+runner:
+  image: ghcr.io/example/actions-runner-cache@sha256:<digest>
+```
+
+`PUBLIC_URL` には job から到達できる同じ URL を設定します。
+他の Actions runtime service は job 単位の token を使うため、`ACTIONS_RUNTIME_TOKEN` は変更しません。
+現在の proxy は固定の `AUTH_TOKEN` を使うため、本番利用前に runner から proxy への認証方式を別途設定する必要があります。
+
+この patch では workflow を変更しませんが、upstream runner を更新したときは runner image を再 build します。
+
 ## API
 
 | Method と path | 認証 | 用途 |

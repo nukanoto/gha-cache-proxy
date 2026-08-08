@@ -91,6 +91,43 @@ ACTIONS_RESULTS_URL=https://cache.example.internal
 The proxy accepts the control-plane requests with `Authorization: Bearer <AUTH_TOKEN>`.
 Blob requests use the signed URLs returned by the v1 or v2 API and do not need the Bearer header.
 
+## Runner image patch
+
+A Dockerfile `ENV ACTIONS_CACHE_URL=...` setting is not sufficient.
+The official runner overwrites `ACTIONS_CACHE_URL` and `ACTIONS_RESULTS_URL` for every job from `SystemVssConnection` endpoint data.
+
+For a workflow-compatible deployment, build a runner image with a small patch to `actions/runner`.
+Apply the override after the existing `CacheServerUrl` and `ResultsServiceUrl` assignments in `NodeScriptActionHandler` and `ContainerActionHandler`:
+
+```csharp
+var proxyUrl = System.Environment.GetEnvironmentVariable("GHA_CACHE_PROXY_URL");
+if (!string.IsNullOrWhiteSpace(proxyUrl))
+{
+    var url = proxyUrl.TrimEnd('/') + "/";
+    Environment["ACTIONS_CACHE_URL"] = url;
+    Environment["ACTIONS_RESULTS_URL"] = url;
+}
+```
+
+Set the private override in the runner image or in the controller that launches it:
+
+```text
+GHA_CACHE_PROXY_URL=http://gha-cache-proxy:8080
+```
+
+Point the controller at the patched image:
+
+```yaml
+runner:
+  image: ghcr.io/example/actions-runner-cache@sha256:<digest>
+```
+
+Set `PUBLIC_URL` to the same URL that the job can reach.
+Keep `ACTIONS_RUNTIME_TOKEN` unchanged because other Actions runtime services use the job-scoped token.
+The current proxy still uses a fixed `AUTH_TOKEN`, so the runner-to-proxy authentication strategy must be configured separately before production use.
+
+This patch leaves workflows unchanged, but the runner image must be rebuilt when the upstream runner is updated.
+
 ## API surface
 
 | Method and path | Authentication | Purpose |
