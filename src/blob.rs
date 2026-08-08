@@ -14,6 +14,7 @@ use hmac::{Hmac, Mac};
 use sha2::Sha256;
 use uuid::Uuid;
 
+use crate::index;
 use crate::store::Store;
 use crate::{ct_eq, json_error, unix_now, AppState};
 
@@ -268,10 +269,30 @@ async fn put_block(
             "block exceeds maximum cache size",
         );
     }
+    // Reserve the staging budget before any bytes hit S3; the reservation is
+    // rolled back when the upload fails. Parallel blocks of different ids
+    // still proceed concurrently because the budget update is serialized only
+    // around the check-and-reserve, not the upload itself.
+    let block_key = state.store.block_key(id, block_id);
+    let old_size = match index::reserve_staging(&state, id, &block_key, len).await {
+        Ok(old) => old,
+        Err(index::StagingError::NoReservation) => {
+            return json_error(StatusCode::NOT_FOUND, "reservation not found");
+        }
+        Err(index::StagingError::OverBudget) => {
+            return json_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "block exceeds the staging budget for this reservation",
+            );
+        }
+        Err(index::StagingError::Internal) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+        }
+    };
     match state
         .store
         .put(
-            &state.store.block_key(id, block_id),
+            &block_key,
             len,
             Store::upload_stream(req.into_body(), len),
         )
@@ -280,6 +301,9 @@ async fn put_block(
         Ok(()) => created(),
         Err(e) => {
             tracing::warn!("block upload to S3 failed: {e}");
+            if let Err(re) = index::release_staging(&state, id, old_size, len).await {
+                tracing::error!("failed to roll back staging budget for reservation {id}: {re}");
+            }
             json_error(StatusCode::INTERNAL_SERVER_ERROR, "block upload failed")
         }
     }
@@ -397,14 +421,15 @@ pub async fn head(State(state): State<Arc<AppState>>, Path(token): Path<String>)
     let Some(entry) = entry else {
         return json_error(StatusCode::NOT_FOUND, "cache entry not found");
     };
-    let Some(archive) = state
-        .store
-        .head(&state.store.archive_key(id))
-        .await
-        .ok()
-        .flatten()
-    else {
-        return json_error(StatusCode::NOT_FOUND, "archive not found");
+    // Only a confirmed missing object is a 404; S3 failures must not look
+    // like cache misses or the client would overwrite a healthy cache.
+    let archive = match state.store.head(&state.store.archive_key(id)).await {
+        Ok(Some(h)) => h,
+        Ok(None) => return json_error(StatusCode::NOT_FOUND, "archive not found"),
+        Err(e) => {
+            tracing::error!("failed to inspect archive for entry {id}: {e}");
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+        }
     };
     let mut response = Response::new(Body::empty());
     let headers = response.headers_mut();
@@ -448,8 +473,13 @@ pub async fn get(
 
     match range {
         None => {
-            let Some(out) = state.store.get_object(&key).await.ok().flatten() else {
-                return json_error(StatusCode::NOT_FOUND, "archive not found");
+            let out = match state.store.get_object(&key).await {
+                Ok(Some(o)) => o,
+                Ok(None) => return json_error(StatusCode::NOT_FOUND, "archive not found"),
+                Err(e) => {
+                    tracing::error!("failed to read archive for entry {id}: {e}");
+                    return json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+                }
             };
             let etag = out.e_tag().map(str::to_string);
             let modified = out.last_modified().map(|d| {
@@ -473,8 +503,13 @@ pub async fn get(
         Some(range_header) => match parse_range(range_header, entry.size) {
             Ok(Some((start, end))) => {
                 let range = format!("bytes={start}-{end}");
-                let Some(out) = state.store.get_range(&key, &range).await.ok().flatten() else {
-                    return json_error(StatusCode::NOT_FOUND, "archive not found");
+                let out = match state.store.get_range(&key, &range).await {
+                    Ok(Some(o)) => o,
+                    Ok(None) => return json_error(StatusCode::NOT_FOUND, "archive not found"),
+                    Err(e) => {
+                        tracing::error!("failed to read archive range for entry {id}: {e}");
+                        return json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal error");
+                    }
                 };
                 let length = out.content_length().map(|l| l.to_string());
                 let content_range = out.content_range().map(str::to_string);

@@ -18,8 +18,8 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      # bash /dev/tcp probe; the image ships no curl/mc
-      test: ["CMD-SHELL", 'exec 3<>/dev/tcp/127.0.0.1/9000; printf "GET /minio/health/live HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3; IFS= read -r line <&3; case "$$line" in *"200 OK"*) exit 0;; *) exit 1;; esac']
+      # curl ships in the pinned MinIO image; /bin/sh in CMD-SHELL has no /dev/tcp.
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
       interval: 5s
       timeout: 3s
       retries: 12

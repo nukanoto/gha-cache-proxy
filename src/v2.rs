@@ -71,7 +71,7 @@ pub struct GetCacheEntryDownloadURLRequest {
 }
 
 #[derive(Clone, PartialEq, prost::Message, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub struct CreateCacheEntryResponse {
     #[prost(bool, tag = "1")]
     pub ok: bool,
@@ -82,7 +82,7 @@ pub struct CreateCacheEntryResponse {
 }
 
 #[derive(Clone, PartialEq, prost::Message, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub struct FinalizeCacheEntryUploadResponse {
     #[prost(bool, tag = "1")]
     pub ok: bool,
@@ -93,7 +93,7 @@ pub struct FinalizeCacheEntryUploadResponse {
 }
 
 #[derive(Clone, PartialEq, prost::Message, Serialize)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "camelCase")]
 pub struct GetCacheEntryDownloadURLResponse {
     #[prost(bool, tag = "1")]
     pub ok: bool,
@@ -135,9 +135,9 @@ fn respond<T: Message + Serialize>(content_type: &str, message: &T) -> Response 
     } else {
         let mut value = serde_json::to_value(message).unwrap_or_default();
         // Protobuf JSON represents int64 values as strings for JavaScript safety.
-        if let Some(entry_id) = value.get("entry_id").and_then(|v| v.as_i64()) {
+        if let Some(entry_id) = value.get("entryId").and_then(|v| v.as_i64()) {
             if let Some(object) = value.as_object_mut() {
-                object.insert("entry_id".into(), serde_json::json!(entry_id.to_string()));
+                object.insert("entryId".into(), serde_json::json!(entry_id.to_string()));
             }
         }
         (
@@ -149,8 +149,10 @@ fn respond<T: Message + Serialize>(content_type: &str, message: &T) -> Response 
     }
 }
 
-/// Extract the v2 request fields from the JSON form (snake_case proto names).
-/// size_bytes is a JSON string because protobuf int64 maps to string.
+/// Extract the v2 request fields from the JSON form. Accepts the protobuf JSON
+/// lowerCamelCase names used by @actions/cache (`sizeBytes`, `restoreKeys`)
+/// and the snake_case aliases. size_bytes is a JSON string because protobuf
+/// int64 maps to string.
 fn extract_json_fields(
     value: &serde_json::Value,
     want_size: bool,
@@ -166,7 +168,11 @@ fn extract_json_fields(
         .ok_or("missing version")?
         .to_string();
     let mut restore_keys = Vec::new();
-    if let Some(arr) = value.get("restore_keys").and_then(|v| v.as_array()) {
+    if let Some(arr) = value
+        .get("restore_keys")
+        .or_else(|| value.get("restoreKeys"))
+        .and_then(|v| v.as_array())
+    {
         for item in arr {
             restore_keys.push(
                 item.as_str()
@@ -176,7 +182,7 @@ fn extract_json_fields(
         }
     }
     let size_bytes = if want_size {
-        match value.get("size_bytes") {
+        match value.get("size_bytes").or_else(|| value.get("sizeBytes")) {
             Some(serde_json::Value::String(s)) => Some(
                 s.parse::<u64>()
                     .map_err(|_| "size_bytes must be a non-negative integer")?,
@@ -565,8 +571,8 @@ mod tests {
     }
 
     #[test]
-    fn レスポンスのjsonはスネークケースで出力される() {
-        println!("レスポンスJSONがスネークケースのプロト名で出力されることを確認");
+    fn レスポンスのjsonはlower_camel_case名で出力される() {
+        println!("レスポンスJSONがprotobuf JSONのlowerCamelCase名で出力されることを確認");
         let resp = CreateCacheEntryResponse {
             ok: true,
             signed_upload_url: "https://example/artifacts/x".into(),
@@ -574,7 +580,8 @@ mod tests {
         };
         let json = serde_json::to_value(&resp).unwrap();
         assert_eq!(json["ok"], true);
-        assert_eq!(json["signed_upload_url"], "https://example/artifacts/x");
+        assert_eq!(json["signedUploadUrl"], "https://example/artifacts/x");
+        assert!(json.get("signed_upload_url").is_none());
         let resp2 = GetCacheEntryDownloadURLResponse {
             ok: false,
             signed_download_url: String::new(),
@@ -582,8 +589,39 @@ mod tests {
         };
         let json2 = serde_json::to_value(&resp2).unwrap();
         assert_eq!(json2["ok"], false);
-        assert!(json2.get("matched_key").is_some());
-        assert!(json2.get("signed_download_url").is_some());
+        assert_eq!(json2["matchedKey"], "");
+        assert_eq!(json2["signedDownloadUrl"], "");
+    }
+
+    #[tokio::test]
+    async fn jsonレスポンスのentry_idは文字列になる() {
+        println!("JSONレスポンスのentryIdがint64のため文字列として出力されることを確認");
+        let resp = FinalizeCacheEntryUploadResponse {
+            ok: true,
+            entry_id: 99,
+            message: String::new(),
+        };
+        let response = respond("application/json", &resp);
+        let bytes = axum::body::to_bytes(response.into_body(), 4096).await.unwrap();
+        let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(value["entryId"], "99");
+        assert_eq!(value["ok"], true);
+    }
+
+    #[test]
+    fn jsonリクエストはcamel_caseエイリアスを受け付ける() {
+        println!("JSONリクエストがlowerCamelCaseのエイリアスを受け付けることを確認");
+        let value: serde_json::Value = serde_json::json!({
+            "key": "k",
+            "version": "v",
+            "restoreKeys": ["a", "b"],
+            "sizeBytes": "1024"
+        });
+        let (key, version, restore, size) = extract_json_fields(&value, true).unwrap();
+        assert_eq!(key, "k");
+        assert_eq!(version, "v");
+        assert_eq!(restore, vec!["a", "b"]);
+        assert_eq!(size, Some(1024));
     }
 
     #[test]

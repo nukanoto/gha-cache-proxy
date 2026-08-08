@@ -25,6 +25,13 @@ fn parse_content_range(h: &str) -> Option<(u64, u64)> {
     (start <= end).then_some((start, end))
 }
 
+/// Inclusive Content-Range length with checked arithmetic; None on malformed
+/// input or on u64 overflow (e.g. `bytes 0-18446744073709551615/*`).
+fn content_range_len(h: &str) -> Option<u64> {
+    let (start, end) = parse_content_range(h)?;
+    end.checked_sub(start)?.checked_add(1)
+}
+
 /// Lookup and diagnostic listing share this route.
 pub async fn caches_get(
     State(state): State<Arc<AppState>>,
@@ -170,22 +177,43 @@ pub async fn cache_patch(
     else {
         return json_error(StatusCode::BAD_REQUEST, "missing Content-Range header");
     };
-    let Some((start, end)) = parse_content_range(content_range) else {
+    let Some(expected) = content_range_len(content_range) else {
         return json_error(StatusCode::BAD_REQUEST, "invalid Content-Range header");
     };
-    let expected = end - start + 1;
-    if expected > state.cfg.max_cache_size_bytes {
+    let (start, end) = parse_content_range(content_range).expect("validated above");
+    // The range must fit inside an archive of the configured maximum: the end
+    // offset alone can be too large even when the length is small.
+    if end >= state.cfg.max_cache_size_bytes || expected > state.cfg.max_cache_size_bytes {
         return json_error(
             StatusCode::PAYLOAD_TOO_LARGE,
             "chunk exceeds maximum cache size",
         );
     }
+    // Reserve the staging budget before any bytes hit S3 so parallel parts
+    // cannot push the reservation over the aggregate limit; the reservation
+    // is rolled back when the upload fails.
+    let chunk_key = state.store.chunk_key(cache_id, start);
+    let old_size = match index::reserve_staging(&state, cache_id, &chunk_key, expected).await {
+        Ok(old) => old,
+        Err(index::StagingError::NoReservation) => {
+            return json_error(StatusCode::BAD_REQUEST, "reservation not found");
+        }
+        Err(index::StagingError::OverBudget) => {
+            return json_error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "chunk exceeds the staging budget for this reservation",
+            );
+        }
+        Err(index::StagingError::Internal) => {
+            return json_error(StatusCode::INTERNAL_SERVER_ERROR, "internal error")
+        }
+    };
     // The body is limited to the declared chunk length so a lying Content-Range
     // can never smuggle extra bytes into staging.
     match state
         .store
         .put(
-            &state.store.chunk_key(cache_id, start),
+            &chunk_key,
             expected,
             Store::upload_stream(body, expected),
         )
@@ -194,6 +222,11 @@ pub async fn cache_patch(
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => {
             tracing::warn!("chunk upload to S3 failed: {e}");
+            if let Err(re) = index::release_staging(&state, cache_id, old_size, expected).await {
+                tracing::error!(
+                    "failed to roll back staging budget for reservation {cache_id}: {re}"
+                );
+            }
             json_error(StatusCode::INTERNAL_SERVER_ERROR, "upload failed")
         }
     }
@@ -280,6 +313,22 @@ mod tests {
         assert_eq!(parse_content_range("0-1023/*"), None);
         assert_eq!(parse_content_range("bytes a-b/*"), None);
         assert_eq!(parse_content_range(""), None);
+    }
+
+    #[test]
+    fn コンテントレンジのインクルーシブ長がオーバーフローしない() {
+        println!("Content-Range の長さ計算がオーバーフロー時に拒否されることを確認");
+        assert_eq!(content_range_len("bytes 0-1023/*"), Some(1024));
+        assert_eq!(content_range_len("bytes 5-5/*"), Some(1));
+        assert_eq!(
+            content_range_len("bytes 0-18446744073709551615/*"),
+            None
+        );
+        assert_eq!(content_range_len("bytes 5-1/*"), None);
+        assert_eq!(
+            content_range_len("bytes 18446744073709551615-18446744073709551615/*"),
+            Some(1)
+        );
     }
 
     #[test]

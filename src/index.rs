@@ -1,7 +1,8 @@
 //! Cache metadata and reservation state, persisted as one JSON object in S3.
 //! The in-memory copy is the source of truth for lookups; every mutation is
-//! serialized through the process lock and persisted before the lock is
-//! released, which makes single-replica reservation semantics deterministic.
+//! serialized through the process lock, built on a clone, persisted, and only
+//! then swapped into the in-memory index, so a failed save never leaves
+//! changed state behind.
 
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +30,11 @@ pub struct Reservation {
     pub created_at: u64,
     /// "v1" (PATCH chunks) or "v2" (Azure blob staging).
     pub protocol: String,
+    /// Aggregate bytes staged under this reservation (v1 chunks + v2 blocks),
+    /// bounded by the configured maximum; replacing a part counts its new
+    /// size only. Defaulted so indices written before this field still load.
+    #[serde(default)]
+    pub staged_bytes: u64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -100,13 +106,21 @@ pub fn lookup<'a>(
     None
 }
 
+/// JavaScript `String.length` counts UTF-16 code units, not bytes; the cache
+/// key rules of @actions/cache use that length, so mirror it here.
+pub fn utf16_len(s: &str) -> usize {
+    s.chars()
+        .map(|c| if (c as u32) <= 0xFFFF { 1 } else { 2 })
+        .sum()
+}
+
 /// Mirror the client-side rules: non-empty, at most 512 chars, no commas.
 pub fn validate_key(key: &str) -> bool {
-    !key.is_empty() && key.len() <= 512 && !key.contains(',')
+    !key.is_empty() && utf16_len(key) <= 512 && !key.contains(',')
 }
 
 pub fn validate_version(version: &str) -> bool {
-    !version.is_empty() && version.len() <= 512
+    !version.is_empty() && utf16_len(version) <= 512
 }
 
 /// True when `chunks` (offset, size) sorted by offset tile [0, total) exactly.
@@ -133,7 +147,8 @@ pub enum ReserveError {
 
 /// Create a reservation for a new upload. A completed entry with the same
 /// key/version, or a fresh reservation, is a conflict; a stale reservation is
-/// reclaimed (its staging objects are deleted asynchronously).
+/// reclaimed (its staging objects are deleted asynchronously) only after the
+/// new reservation persisted successfully.
 pub async fn reserve(
     state: &AppState,
     key: &str,
@@ -149,41 +164,156 @@ pub async fn reserve(
     if idx.find_entry_by_key(key, version).is_some() {
         return Err(ReserveError::Conflict);
     }
-    if let Some(existing) = idx
+    let mut next = idx.clone();
+    let mut reclaimed: Option<u64> = None;
+    if let Some(existing) = next
         .reservations
         .iter()
         .find(|r| r.key == key && r.version == version)
         .cloned()
     {
-        if !idx.is_stale(&existing, now) {
+        if !next.is_stale(&existing, now) {
             return Err(ReserveError::Conflict);
         }
-        idx.reservations.retain(|r| r.id != existing.id);
-        let store = state.store.clone();
-        // Reclaim outside the lock; a fresh id keeps the new upload isolated.
-        tokio::spawn(async move {
-            if let Err(e) = store
-                .delete_prefix(&store.staging_prefix(existing.id))
-                .await
-            {
-                tracing::warn!("stale reservation cleanup failed for {}: {e}", existing.id);
-            }
-        });
+        next.reservations.retain(|r| r.id != existing.id);
+        reclaimed = Some(existing.id);
     }
-    let id = idx.next_id;
-    idx.next_id += 1;
-    idx.reservations.push(Reservation {
+    let id = next.next_id;
+    next.next_id += 1;
+    next.reservations.push(Reservation {
         id,
         key: key.to_string(),
         version: version.to_string(),
         created_at: now,
         protocol: protocol.to_string(),
+        staged_bytes: 0,
     });
-    idx.save(&state.store).await.map_err(|e| {
+    next.save(&state.store).await.map_err(|e| {
         tracing::error!("failed to persist cache index: {e}");
         ReserveError::Internal
     })?;
+    *idx = next;
+    if let Some(stale_id) = reclaimed {
+        let store = state.store.clone();
+        // Reclaim outside the lock; a fresh id keeps the new upload isolated.
+        tokio::spawn(async move {
+            if let Err(e) = store
+                .delete_prefix(&store.staging_prefix(stale_id))
+                .await
+            {
+                tracing::warn!("stale reservation cleanup failed for {stale_id}: {e}");
+            }
+        });
+    }
     Ok(id)
+}
+
+/// Outcome of a commit/finalize attempt that finds its reservation gone: a
+/// concurrent retry may have completed the entry already.
+#[derive(Debug, PartialEq)]
+pub enum CompletionOutcome {
+    /// A completed entry with the same id/size exists: idempotent success.
+    AlreadyCompleted,
+    /// A completed entry exists but declares a different size.
+    SizeConflict,
+    /// No entry references the archive: it is orphaned and may be deleted.
+    Orphan,
+}
+
+/// A losing commit/finalize must never delete an archive a completed entry
+/// references; only an Orphan may be cleaned up.
+pub fn completion_outcome(idx: &Index, id: u64, size: u64) -> CompletionOutcome {
+    match idx.find_entry(id) {
+        Some(e) if e.size == size => CompletionOutcome::AlreadyCompleted,
+        Some(_) => CompletionOutcome::SizeConflict,
+        None => CompletionOutcome::Orphan,
+    }
+}
+
+/// Aggregate for replacing a staged part of `old_size` with one of `new_size`.
+/// Saturating keeps the budget from wrapping when accounting races; the caller
+/// rejects the result when it exceeds the configured maximum.
+pub fn apply_staged_delta(staged: u64, old_size: u64, new_size: u64) -> u64 {
+    match new_size.checked_sub(old_size) {
+        Some(delta) => staged.saturating_add(delta),
+        None => staged.saturating_sub(old_size - new_size),
+    }
+}
+
+#[derive(Debug, PartialEq)]
+pub enum StagingError {
+    NoReservation,
+    OverBudget,
+    Internal,
+}
+
+/// Reserve `new_size` bytes of the reservation's staging budget for the part
+/// at `part_key`, replacing any previously staged part of the same key. The
+/// delta is persisted before it is applied to the in-memory index; callers
+/// must roll it back with `release_staging` when the upload fails.
+pub async fn reserve_staging(
+    state: &AppState,
+    id: u64,
+    part_key: &str,
+    new_size: u64,
+) -> Result<u64, StagingError> {
+    let mut idx = state.index.lock().await;
+    let Some(reservation) = idx.find_reservation(id) else {
+        return Err(StagingError::NoReservation);
+    };
+    // The old part size comes from S3. Reading it under the index lock keeps
+    // the accounting exact: a completed replacement has already committed
+    // both its S3 object and its aggregate before this check runs. A HEAD
+    // failure counts the full new size (fail closed) instead of guessing.
+    let old_size = match state.store.head(part_key).await {
+        Ok(Some(h)) => h.content_length().map(|l| l.max(0) as u64).unwrap_or(0),
+        Ok(None) => 0,
+        Err(e) => {
+            tracing::warn!("failed to inspect staged part {part_key}: {e}");
+            0
+        }
+    };
+    let aggregate = apply_staged_delta(reservation.staged_bytes, old_size, new_size);
+    if aggregate > state.cfg.max_cache_size_bytes {
+        return Err(StagingError::OverBudget);
+    }
+    let mut next = idx.clone();
+    let reservation = next
+        .reservations
+        .iter_mut()
+        .find(|r| r.id == id)
+        .expect("reservation verified above");
+    reservation.staged_bytes = aggregate;
+    next.save(&state.store).await.map_err(|e| {
+        tracing::error!("failed to persist cache index: {e}");
+        StagingError::Internal
+    })?;
+    *idx = next;
+    Ok(old_size)
+}
+
+/// Roll back the delta reserved by `reserve_staging` after a failed upload.
+/// No-op when the reservation no longer exists (completed or reclaimed).
+pub async fn release_staging(
+    state: &AppState,
+    id: u64,
+    old_size: u64,
+    new_size: u64,
+) -> S3Result<()> {
+    let mut idx = state.index.lock().await;
+    let Some(_) = idx.find_reservation(id) else {
+        return Ok(());
+    };
+    let mut next = idx.clone();
+    let reservation = next
+        .reservations
+        .iter_mut()
+        .find(|r| r.id == id)
+        .expect("reservation verified above");
+    reservation.staged_bytes = apply_staged_delta(reservation.staged_bytes, new_size, old_size);
+    next.save(&state.store).await?;
+    *idx = next;
+    Ok(())
 }
 
 #[derive(Debug, PartialEq)]
@@ -197,10 +327,19 @@ pub enum CommitError {
 /// v1 commit: assemble the PATCH chunks into the final archive and mark the
 /// entry completed. The archive is only referenced by the index after the
 /// reservation is confirmed still alive, so a concurrently reclaimed
-/// reservation can never produce a phantom entry.
+/// reservation can never produce a phantom entry. A retried commit of an
+/// already-completed entry with the same size is idempotent success.
 pub async fn commit_v1(state: &AppState, id: u64, size: u64) -> Result<(), CommitError> {
     if size > state.cfg.max_cache_size_bytes {
         return Err(CommitError::TooLarge);
+    }
+    {
+        let idx = state.index.lock().await;
+        match completion_outcome(&idx, id, size) {
+            CompletionOutcome::AlreadyCompleted => return Ok(()),
+            CompletionOutcome::SizeConflict => return Err(CommitError::NotFound),
+            CompletionOutcome::Orphan => {}
+        }
     }
     let reservation = {
         let idx = state.index.lock().await;
@@ -246,26 +385,36 @@ pub async fn commit_v1(state: &AppState, id: u64, size: u64) -> Result<(), Commi
         })?;
 
     let mut idx = state.index.lock().await;
-    if idx.find_reservation(id).is_none() {
-        // The reservation was reclaimed while we assembled; discard the archive.
-        let store = state.store.clone();
-        tokio::spawn(async move {
-            let _ = store.delete_many(vec![store.archive_key(id)]).await;
-        });
-        return Err(CommitError::NotFound);
-    }
-    idx.reservations.retain(|r| r.id != id);
-    idx.entries.push(Entry {
+    let Some(_) = idx.find_reservation(id) else {
+        // The reservation was reclaimed or a concurrent commit won the race.
+        // Never delete an archive a completed entry references; a same-size
+        // retry is idempotent success.
+        return match completion_outcome(&idx, id, size) {
+            CompletionOutcome::AlreadyCompleted => Ok(()),
+            CompletionOutcome::SizeConflict => Err(CommitError::NotFound),
+            CompletionOutcome::Orphan => {
+                let store = state.store.clone();
+                tokio::spawn(async move {
+                    let _ = store.delete_many(vec![store.archive_key(id)]).await;
+                });
+                Err(CommitError::NotFound)
+            }
+        };
+    };
+    let mut next = idx.clone();
+    next.reservations.retain(|r| r.id != id);
+    next.entries.push(Entry {
         id,
         key: reservation.key,
         version: reservation.version,
         size,
         created_at: unix_now(),
     });
-    idx.save(&state.store).await.map_err(|e| {
+    next.save(&state.store).await.map_err(|e| {
         tracing::error!("failed to persist cache index: {e}");
         CommitError::Internal
     })?;
+    *idx = next;
     drop(idx);
 
     let store = state.store.clone();
@@ -337,25 +486,33 @@ pub async fn finalize_v2(
     })?;
 
     let mut idx = state.index.lock().await;
-    if idx.find_reservation(id).is_none() {
-        let store = state.store.clone();
-        tokio::spawn(async move {
-            let _ = store.delete_many(vec![store.archive_key(id)]).await;
-        });
-        return Err(FinalizeError::NoReservation);
-    }
-    idx.reservations.retain(|r| r.id != id);
-    idx.entries.push(Entry {
+    let Some(_) = idx.find_reservation(id) else {
+        return match completion_outcome(&idx, id, size_bytes) {
+            CompletionOutcome::AlreadyCompleted => Ok(id),
+            CompletionOutcome::SizeConflict => Err(FinalizeError::SizeMismatch),
+            CompletionOutcome::Orphan => {
+                let store = state.store.clone();
+                tokio::spawn(async move {
+                    let _ = store.delete_many(vec![store.archive_key(id)]).await;
+                });
+                Err(FinalizeError::NoReservation)
+            }
+        };
+    };
+    let mut next = idx.clone();
+    next.reservations.retain(|r| r.id != id);
+    next.entries.push(Entry {
         id,
         key: key.to_string(),
         version: version.to_string(),
         size: size_bytes,
         created_at: unix_now(),
     });
-    idx.save(&state.store).await.map_err(|e| {
+    next.save(&state.store).await.map_err(|e| {
         tracing::error!("failed to persist cache index: {e}");
         FinalizeError::Internal
     })?;
+    *idx = next;
     drop(idx);
 
     let store = state.store.clone();
@@ -378,6 +535,17 @@ mod tests {
             version: version.to_string(),
             size: 10,
             created_at,
+        }
+    }
+
+    fn reservation(id: u64, key: &str, version: &str, created_at: u64) -> Reservation {
+        Reservation {
+            id,
+            key: key.to_string(),
+            version: version.to_string(),
+            created_at,
+            protocol: "v1".into(),
+            staged_bytes: 0,
         }
     }
 
@@ -453,22 +621,70 @@ mod tests {
     }
 
     #[test]
+    fn キー長はutf16コード単位で数える() {
+        println!("キー長の検証がJavaScriptと同じUTF-16コード単位で数えることを確認");
+        assert_eq!(utf16_len("a"), 1);
+        assert_eq!(utf16_len("あ"), 1); // 2 バイトだが 1 コード単位
+        assert_eq!(utf16_len("😀"), 2); // サロゲートペアは 2 コード単位
+        assert_eq!(utf16_len("a😀あ"), 4);
+        // 512 バイトを超えても 512 コード単位以内なら有効
+        assert!(validate_key("あ".repeat(512).as_str()));
+        assert!(!validate_key("あ".repeat(513).as_str()));
+        assert!(validate_key("😀".repeat(256).as_str()));
+        assert!(!validate_key("😀".repeat(257).as_str()));
+        assert!(validate_version("😀".repeat(256).as_str()));
+        assert!(!validate_version("😀".repeat(257).as_str()));
+    }
+
+    #[test]
     fn 予約はttl超過で失効扱いになる() {
         println!("予約がTTLを超えると失効扱いになることを確認");
         let idx = Index {
             next_id: 1,
             entries: vec![],
-            reservations: vec![Reservation {
-                id: 1,
-                key: "k".into(),
-                version: "v".into(),
-                created_at: 100,
-                protocol: "v2".into(),
-            }],
+            reservations: vec![reservation(1, "k", "v", 100)],
         };
         let r = idx.find_reservation(1).unwrap();
         assert!(!idx.is_stale(r, 100 + RESERVATION_TTL_SECS - 1));
         assert!(idx.is_stale(r, 100 + RESERVATION_TTL_SECS));
+    }
+
+    #[test]
+    fn 予約消失時の完了判定が冪等成功と孤立を区別する() {
+        println!("予約消失時の完了判定が同一サイズの冪等成功と孤立アーカイブを区別することを確認");
+        let idx = Index {
+            next_id: 2,
+            entries: vec![entry(7, "k", "v", 100)],
+            reservations: vec![],
+        };
+        // 完了済みエントリと同一サイズなら冪等成功
+        assert_eq!(
+            completion_outcome(&idx, 7, 10),
+            CompletionOutcome::AlreadyCompleted
+        );
+        // サイズが異なれば競合
+        assert_eq!(completion_outcome(&idx, 7, 99), CompletionOutcome::SizeConflict);
+        // エントリが無ければ孤立
+        assert_eq!(completion_outcome(&idx, 8, 10), CompletionOutcome::Orphan);
+    }
+
+    #[test]
+    fn ステージング予算の置換差分が正しい() {
+        println!("ステージング予算が同一パートの置換を差分で計上することを確認");
+        assert_eq!(apply_staged_delta(100, 30, 50), 120); // 置換で +20
+        assert_eq!(apply_staged_delta(100, 30, 200), 270);
+        assert_eq!(apply_staged_delta(100, 200, 50), 0); // 縮小は飽和
+        assert_eq!(apply_staged_delta(0, 0, 10), 10); // 新規パート
+        assert_eq!(apply_staged_delta(10, 10, 10), 10); // 同一サイズ置換は不変
+        assert_eq!(apply_staged_delta(u64::MAX, 0, u64::MAX), u64::MAX); // 飽和加算
+    }
+
+    #[test]
+    fn 旧形式インデックスの予約は予算ゼロで読み込める() {
+        println!("staged_bytes を持たない旧形式インデックスが読み込めることを確認");
+        let json = r#"{"id":1,"key":"k","version":"v","created_at":100,"protocol":"v1"}"#;
+        let r: Reservation = serde_json::from_str(json).unwrap();
+        assert_eq!(r.staged_bytes, 0);
     }
 
     #[test]
@@ -483,6 +699,7 @@ mod tests {
                 version: "v".into(),
                 created_at: 200,
                 protocol: "v1".into(),
+                staged_bytes: 42,
             }],
         };
         let bytes = serde_json::to_vec(&idx).unwrap();

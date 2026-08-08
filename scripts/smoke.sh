@@ -61,8 +61,9 @@ assert_4xx() {
   esac
 }
 
-json_get() { # key -> value parsed from $WORK/body
-  python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$WORK/body" "$1"
+json_get() { # key [file] -> value parsed from the JSON file (default $WORK/body)
+  local file="${2:-$WORK/body}"
+  python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$file" "$1"
 }
 
 header_value() { # name -> value parsed from $WORK/hdr
@@ -172,7 +173,7 @@ test_auth_and_limit() {
   twirp_post "$V2_CREATE" "$WORK/req.json"
   assert_status 200 "v2 create for limit test"
   local url
-  url="$(json_get signed_upload_url)"
+  url="$(json_get signedUploadUrl)"
   curl_raw -X PUT --data-binary @"$WORK/payload_over" "$url"
   case "$STATUS" in
     413) pass "oversized upload rejected with 413" ;;
@@ -204,14 +205,18 @@ test_v1() {
   v1_upload_chunks "$id" "$payload"
   v1_commit "$id" 1000
 
-  # Completed entries are immutable.
+  # Completed entries are immutable: PATCH is rejected, a same-size commit
+  # retry is idempotent, a different-size commit is rejected.
   curl_raw -X PATCH "${AUTH[@]}" -H 'Content-Type: application/octet-stream' \
     -H 'Content-Range: bytes 0-99/*' --data-binary @"$WORK/chunk1" \
     "$PROXY_URL/_apis/artifactcache/caches/$id"
   assert_4xx "v1 completed entry rejects PATCH"
   curl_raw -X POST "${AUTH[@]}" -H 'Content-Type: application/json' \
     -d '{"size":1000}' "$PROXY_URL/_apis/artifactcache/caches/$id"
-  assert_4xx "v1 completed entry rejects commit"
+  assert_2xx "v1 completed entry commit is idempotent (same size)"
+  curl_raw -X POST "${AUTH[@]}" -H 'Content-Type: application/json' \
+    -d '{"size":999}' "$PROXY_URL/_apis/artifactcache/caches/$id"
+  assert_4xx "v1 completed entry rejects commit with different size"
 
   v1_lookup "$V1_KEY" "$V1_VERSION"
   assert_status 200 "v1 exact lookup"
@@ -243,10 +248,16 @@ print("ok: v1 diagnostic list contains entry")
 PY
   pass "v1 diagnostic list contains entry"
 
-  # Restore-key prefixes are tried in order.
+  # Restore-key prefixes are tried in order; each reservation must stage
+  # valid chunks before committing, exactly like the primary entry.
   local res_a="resA-1-$TS" res_b="resB-9-$TS"
-  v1_commit "$(v1_reserve "$res_a" "$V1_VERSION" 1000)" 1000
-  v1_commit "$(v1_reserve "$res_b" "$V1_VERSION" 1000)" 1000
+  local id_a id_b
+  id_a="$(v1_reserve "$res_a" "$V1_VERSION" 1000)"
+  id_b="$(v1_reserve "$res_b" "$V1_VERSION" 1000)"
+  v1_upload_chunks "$id_a" "$payload"
+  v1_upload_chunks "$id_b" "$payload"
+  v1_commit "$id_a" 1000
+  v1_commit "$id_b" 1000
   v1_lookup "primary-miss-$TS,resA" "$V1_VERSION"
   assert_status 200 "v1 restore-key prefix match"
   [ "$(json_get cacheKey)" = "$res_a" ] || fail "v1 prefix match returned wrong key"
@@ -273,11 +284,11 @@ test_v2_json() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d.get("ok") is True, d
-assert d.get("signed_upload_url", "").startswith(sys.argv[2] + "/artifacts/"), d
+assert d.get("signedUploadUrl", "").startswith(sys.argv[2] + "/artifacts/"), d
 print("ok: v2 create ok=true with signed upload URL")
 PY
   local url
-  url="$(json_get signed_upload_url)"
+  url="$(json_get signedUploadUrl)"
 
   # A duplicate reservation is a logical conflict.
   twirp_post "$V2_CREATE" "$WORK/req.json"
@@ -293,31 +304,6 @@ PY
   curl_raw -X PUT -H 'Content-Type: application/octet-stream' --data-binary @"$payload" "$url"
   assert_status 201 "v2 blob plain PUT returns 201"
 
-  curl_raw -I "$url"
-  assert_status 200 "v2 blob HEAD"
-  [ "$(header_value content-length)" = "2048" ] || fail "v2 blob HEAD content-length: $(header_value content-length)"
-  pass "v2 blob HEAD content-length=2048"
-  case "$(header_value content-type)" in
-    *octet-stream*) pass "v2 blob HEAD content-type" ;;
-    *) fail "v2 blob HEAD content-type: $(header_value content-type)" ;;
-  esac
-
-  curl_raw "$url"
-  assert_status 200 "v2 blob full GET"
-  cmp -s "$WORK/body" "$payload" || fail "v2 blob full GET content mismatch"
-  pass "v2 blob full GET content matches"
-  [ -n "$(header_value content-length)" ] || fail "v2 blob GET content-length header missing"
-  pass "v2 blob GET content-length header present"
-
-  # Range GET
-  curl_raw -H 'Range: bytes=100-199' "$url"
-  assert_status 206 "v2 blob range GET returns 206"
-  [ "$(header_value content-range)" = "bytes 100-199/2048" ] || fail "v2 blob range content-range: $(header_value content-range)"
-  pass "v2 blob range content-range correct"
-  tail -c +101 "$payload" | head -c 100 > "$WORK/range_exp"
-  cmp -s "$WORK/body" "$WORK/range_exp" || fail "v2 blob range GET content mismatch"
-  pass "v2 blob range GET content matches"
-
   # finalize
   printf '{"key":"%s","version":"%s","size_bytes":"2048"}' "$V2_KEY" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_FINALIZE" "$WORK/req.json"
@@ -325,22 +311,49 @@ PY
   python3 - "$WORK/body" <<'PY' || fail "v2 finalize response"
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d.get("ok") is True and str(d.get("entry_id", "")).isdigit(), d
-print("ok: v2 finalize entry_id=%s" % d["entry_id"])
+assert d.get("ok") is True and str(d.get("entryId", "")).isdigit(), d
+print("ok: v2 finalize entryId=%s" % d["entryId"])
 PY
 
-  # Resolve and download the archive URL.
+  # Resolve the archive URL; blob reads only work with a download URL
+  # obtained after finalize, never with the upload token.
   printf '{"key":"%s","version":"%s","restore_keys":[]}' "$V2_KEY" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_GET" "$WORK/req.json"
   assert_status 200 "v2 get download URL (JSON)"
   local dl
-  dl="$(json_get signed_download_url)"
-  [ "$(json_get matched_key)" = "$V2_KEY" ] || fail "v2 matched_key mismatch"
-  pass "v2 matched_key=$V2_KEY"
+  dl="$(json_get signedDownloadUrl)"
+  [ "$(json_get matchedKey)" = "$V2_KEY" ] || fail "v2 matchedKey mismatch"
+  pass "v2 matchedKey=$V2_KEY"
   case "$dl" in
     "$PROXY_URL/artifacts/"*) pass "v2 signed download URL" ;;
     *) fail "v2 download URL unexpected: $dl" ;;
   esac
+
+  curl_raw -I "$dl"
+  assert_status 200 "v2 blob HEAD after finalize"
+  [ "$(header_value content-length)" = "2048" ] || fail "v2 blob HEAD content-length: $(header_value content-length)"
+  pass "v2 blob HEAD content-length=2048"
+  case "$(header_value content-type)" in
+    *octet-stream*) pass "v2 blob HEAD content-type" ;;
+    *) fail "v2 blob HEAD content-type: $(header_value content-type)" ;;
+  esac
+
+  curl_raw "$dl"
+  assert_status 200 "v2 blob full GET"
+  cmp -s "$WORK/body" "$payload" || fail "v2 blob full GET content mismatch"
+  pass "v2 blob full GET content matches"
+  [ -n "$(header_value content-length)" ] || fail "v2 blob GET content-length header missing"
+  pass "v2 blob GET content-length header present"
+
+  # Range GET
+  curl_raw -H 'Range: bytes=100-199' "$dl"
+  assert_status 206 "v2 blob range GET returns 206"
+  [ "$(header_value content-range)" = "bytes 100-199/2048" ] || fail "v2 blob range content-range: $(header_value content-range)"
+  pass "v2 blob range content-range correct"
+  tail -c +101 "$payload" | head -c 100 > "$WORK/range_exp"
+  cmp -s "$WORK/body" "$WORK/range_exp" || fail "v2 blob range GET content mismatch"
+  pass "v2 blob range GET content matches"
+
   [ "$(download_sha "$dl")" = "$sha" ] || fail "v2 download content mismatch"
   pass "v2 download content matches"
 
@@ -361,15 +374,16 @@ PY
   printf '{"key":"%s","version":"%s"}' "$res_c" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_CREATE" "$WORK/req.json"
   assert_status 200 "v2 create restore entry"
-  curl_raw -X PUT --data-binary @"$WORK/payload_resc" "$(json_get signed_upload_url)"
+  curl_raw -X PUT --data-binary @"$WORK/payload_resc" "$(json_get signedUploadUrl)"
   assert_status 201 "v2 restore entry blob PUT"
   printf '{"key":"%s","version":"%s","size_bytes":"512"}' "$res_c" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_FINALIZE" "$WORK/req.json"
   assert_status 200 "v2 finalize restore entry"
-  printf '{"key":"miss-%s","version":"%s","restore_keys":["resC"]}' "$TS" "$V2_VERSION" > "$WORK/req.json"
+  # restoreKeys exercises the lowerCamelCase request alias.
+  printf '{"key":"miss-%s","version":"%s","restoreKeys":["resC"]}' "$TS" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_GET" "$WORK/req.json"
   assert_status 200 "v2 restore-key prefix match"
-  [ "$(json_get matched_key)" = "$res_c" ] || fail "v2 prefix match returned wrong key"
+  [ "$(json_get matchedKey)" = "$res_c" ] || fail "v2 prefix match returned wrong key"
   pass "v2 restore-key prefix match returns $res_c"
 
   V2_SHA="$sha"
@@ -386,7 +400,7 @@ test_blob_blocks() {
   twirp_post "$V2_CREATE" "$WORK/req.json"
   assert_status 200 "v2 create for block test"
   local url
-  url="$(json_get signed_upload_url)"
+  url="$(json_get signedUploadUrl)"
 
   head -c 1024 "$payload" > "$WORK/block1"
   tail -c +1025 "$payload" > "$WORK/block2"
@@ -403,37 +417,40 @@ test_blob_blocks() {
   curl_raw -X PUT -H 'Content-Type: application/xml' --data-binary @"$WORK/blocklist.xml" "$url?comp=blocklist"
   assert_status 201 "v2 blob commit block list (comp=blocklist)"
 
-  curl_raw -I "$url"
-  assert_status 200 "v2 blob HEAD after blocklist"
-  [ "$(header_value content-length)" = "1536" ] || fail "v2 blob HEAD content-length after blocklist"
-  pass "v2 blob HEAD content-length=1536"
-
-  curl_raw "$url"
-  assert_status 200 "v2 blob GET after blocklist"
-  cmp -s "$WORK/body" "$payload" || fail "v2 blob GET content mismatch after blocklist"
-  pass "v2 blob GET content matches after blocklist"
-
-  curl_raw -H 'Range: bytes=1024-1535' "$url"
-  assert_status 206 "v2 blob range GET after blocklist"
-  [ "$(header_value content-range)" = "bytes 1024-1535/1536" ] || fail "v2 blob range content-range: $(header_value content-range)"
-  pass "v2 blob range content-range correct"
-  cmp -s "$WORK/body" "$WORK/block2" || fail "v2 blob range content mismatch"
-  pass "v2 blob range GET content matches"
-
   printf '{"key":"%s","version":"%s","size_bytes":"1536"}' "$V2_BLOCK_KEY" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_FINALIZE" "$WORK/req.json"
   assert_status 200 "v2 finalize block-built entry"
   python3 - "$WORK/body" <<'PY' || fail "v2 finalize block-built entry response"
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d.get("ok") is True and str(d.get("entry_id", "")).isdigit(), d
-print("ok: v2 finalize block-built entry entry_id=%s" % d["entry_id"])
+assert d.get("ok") is True and str(d.get("entryId", "")).isdigit(), d
+print("ok: v2 finalize block-built entry entryId=%s" % d["entryId"])
 PY
 
   printf '{"key":"%s","version":"%s","restore_keys":[]}' "$V2_BLOCK_KEY" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_GET" "$WORK/req.json"
   assert_status 200 "v2 get download URL for block-built entry"
-  [ "$(download_sha "$(json_get signed_download_url)")" = "$sha" ] || fail "v2 block-built download content mismatch"
+  local dl
+  dl="$(json_get signedDownloadUrl)"
+
+  curl_raw -I "$dl"
+  assert_status 200 "v2 blob HEAD after blocklist"
+  [ "$(header_value content-length)" = "1536" ] || fail "v2 blob HEAD content-length after blocklist"
+  pass "v2 blob HEAD content-length=1536"
+
+  curl_raw "$dl"
+  assert_status 200 "v2 blob GET after blocklist"
+  cmp -s "$WORK/body" "$payload" || fail "v2 blob GET content mismatch after blocklist"
+  pass "v2 blob GET content matches after blocklist"
+
+  curl_raw -H 'Range: bytes=1024-1535' "$dl"
+  assert_status 206 "v2 blob range GET after blocklist"
+  [ "$(header_value content-range)" = "bytes 1024-1535/1536" ] || fail "v2 blob range content-range: $(header_value content-range)"
+  pass "v2 blob range content-range correct"
+  cmp -s "$WORK/body" "$WORK/block2" || fail "v2 blob range content mismatch"
+  pass "v2 blob range GET content matches"
+
+  [ "$(download_sha "$dl")" = "$sha" ] || fail "v2 block-built download content mismatch"
   pass "v2 block-built download content matches"
 }
 
@@ -455,7 +472,7 @@ assert d.get("ok") is True and d.get("signed_upload_url"), d
 print("ok: v2 protobuf create ok=true")
 PY
   local url
-  url="$(json_get signed_upload_url)"
+  url="$(json_get signed_upload_url "$WORK/create.json")"
   curl_raw -X PUT --data-binary @"$payload" "$url"
   assert_status 201 "v2 protobuf entry blob PUT"
 
@@ -481,7 +498,7 @@ assert d.get("ok") is True and d.get("matched_key") == sys.argv[2] and d.get("si
 print("ok: v2 protobuf get matched_key=%s" % d["matched_key"])
 PY
   local dl
-  dl="$(json_get signed_download_url)"
+  dl="$(json_get signed_download_url "$WORK/get.json")"
   [ "$(download_sha "$dl")" = "$sha" ] || fail "v2 protobuf download content mismatch"
   pass "v2 protobuf download content matches"
 
@@ -527,7 +544,7 @@ PY
   printf '{"key":"%s","version":"%s","restore_keys":[]}' "$v2_key" "$v2_version" > "$WORK/req.json"
   twirp_post "$V2_GET" "$WORK/req.json"
   assert_status 200 "v2 lookup after restart"
-  [ "$(download_sha "$(json_get signed_download_url)")" = "$v2_sha" ] || fail "v2 archive content after restart"
+  [ "$(download_sha "$(json_get signedDownloadUrl)")" = "$v2_sha" ] || fail "v2 archive content after restart"
   pass "v2 archive restored after restart"
 
   python3 twirp_proto.py encode GetCacheEntryDownloadURL --key "$pb_key" --version "$pb_version" > "$WORK/req.pb"

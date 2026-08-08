@@ -4,8 +4,10 @@
 Only the fields the smoke test needs are supported. Requests are encoded with
 the proto field numbers of github.actions.results.api.v1.CacheService; omitted
 fields stay out of the message, matching how @actions/cache omits unset fields.
-Responses are decoded to their proto snake_case JSON names, which is what the
-proxy contract mandates. Uses only the Python standard library.
+Responses are decoded into a dict keyed by the proto field names (snake_case).
+This tool only decodes the protobuf wire format, so it is unaffected by the
+lowerCamelCase field names the proxy uses in JSON transport responses. Uses
+only the Python standard library.
 """
 
 import json
