@@ -13,6 +13,41 @@ The example deliberately replaces the incoming job Bearer token with a fixed int
 This is not validation of `ACTIONS_RUNTIME_TOKEN`.
 Keep Caddy on a private network or require mTLS so an untrusted client cannot use the replacement token.
 
+## Compose runner
+
+`compose.yaml` starts SeaweedFS, the Rust proxy, Caddy, and one ephemeral official GitHub Actions runner.
+The runner image is based on the pinned official runner image and adds the Caddy CA trust setup.
+
+Create a repository or organization runner registration token, then start the example:
+
+```sh
+export RUNNER_URL=https://github.com/example/project
+export RUNNER_TOKEN=replace-with-a-runner-registration-token
+export CACHE_PROXY_AUTH_TOKEN=replace-with-an-internal-cache-token
+docker compose -f examples/interception/compose.yaml up --build
+```
+
+The runner label defaults to `gha-cache-interception`.
+Use that label in a workflow:
+
+```yaml
+jobs:
+  cache-check:
+    runs-on: gha-cache-interception
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: .cache
+          key: interception-example
+```
+
+The runner is ephemeral and exits after one job.
+Stop the stack and remove its volumes with:
+
+```sh
+docker compose -f examples/interception/compose.yaml down -v
+```
+
 ## Caddy
 
 Use [`Caddyfile`](Caddyfile) and set the same token on Caddy and the Rust proxy:
