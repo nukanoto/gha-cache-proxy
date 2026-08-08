@@ -151,6 +151,12 @@ The current proxy still uses a fixed `AUTH_TOKEN`, so the runner-to-proxy authen
 
 This patch leaves workflows unchanged, but the runner image must be rebuilt when the upstream runner is updated.
 
+## Interception example
+
+[`examples/interception/`](examples/interception/) contains a Caddy and DNS interception example for stock runners.
+It terminates TLS for the intercepted hostnames and replaces the incoming job token with the proxy's private internal token.
+Use it only on a private network or with mTLS because it does not validate `ACTIONS_RUNTIME_TOKEN`.
+
 ## API surface
 
 | Method and path | Authentication | Purpose |

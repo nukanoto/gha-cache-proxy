@@ -151,6 +151,12 @@ runner:
 
 この patch では workflow を変更しませんが、upstream runner を更新したときは runner image を再 build します。
 
+## Interception の例
+
+[`examples/interception/`](examples/interception/) に、stock runner を対象にした Caddy と DNS interception の例があります。
+intercept した hostname の TLS を終端し、job token を proxy 内部用の固定 token へ置き換えます。
+`ACTIONS_RUNTIME_TOKEN` の検証は行わないため、private network または mTLS と組み合わせてください。
+
 ## API
 
 | Method と path | 認証 | 用途 |
