@@ -10,12 +10,16 @@ COPY src/ ./src/
 RUN cargo build --release --locked
 
 FROM debian:bookworm-slim
-# ca-certificates is needed for TLS S3 endpoints.
+# ca-certificates is needed for TLS S3 / upstream endpoints; libcap2-bin grants
+# cap_net_bind_service so the non-root user can bind port 443 in TLS mode.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
+    && apt-get install -y --no-install-recommends ca-certificates libcap2-bin \
     && rm -rf /var/lib/apt/lists/* \
-    && useradd --create-home --uid 10001 gha-cache
+    && useradd --create-home --uid 10001 gha-cache \
+    && mkdir -p /var/lib/gha-cache-proxy/tls /runner-ca \
+    && chown -R gha-cache:gha-cache /var/lib/gha-cache-proxy /runner-ca
 COPY --from=builder /build/target/release/gha-cache-proxy /usr/local/bin/gha-cache-proxy
+RUN setcap 'cap_net_bind_service=+ep' /usr/local/bin/gha-cache-proxy
 USER gha-cache
-EXPOSE 8080
+EXPOSE 8080 443
 ENTRYPOINT ["gha-cache-proxy"]

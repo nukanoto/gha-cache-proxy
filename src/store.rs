@@ -307,12 +307,14 @@ mod tests {
             listen_addr: "0.0.0.0:8080".into(),
             public_url: "http://localhost:8080".into(),
             auth_token: "t".into(),
+            require_http_auth: true,
             s3_endpoint: "http://localhost:8333".into(),
             s3_bucket: "bucket".into(),
             s3_region: "us-east-1".into(),
             s3_access_key_id: "a".into(),
             s3_secret_access_key: "b".into(),
             max_cache_size_bytes: 1024,
+            tls: None,
         };
         build_client(&cfg)
     }
