@@ -57,6 +57,8 @@ pub struct Config {
     pub s3_access_key_id: String,
     pub s3_secret_access_key: String,
     pub max_cache_size_bytes: u64,
+    /// Optional total cache size limit for automatic LRU eviction (0 = unlimited).
+    pub max_total_cache_size_bytes: u64,
     pub tls: Option<TlsConfig>,
 }
 
@@ -75,6 +77,12 @@ impl Config {
                 .parse::<u64>()
                 .map_err(|_| "MAX_CACHE_SIZE_BYTES must be a number".to_string())?,
             Err(_) => DEFAULT_MAX_CACHE_SIZE_BYTES,
+        };
+        let max_total_cache_size_bytes = match optional("MAX_TOTAL_CACHE_SIZE_BYTES") {
+            Some(v) => v
+                .parse::<u64>()
+                .map_err(|_| "MAX_TOTAL_CACHE_SIZE_BYTES must be a number".to_string())?,
+            None => 0,
         };
 
         let tls = match optional("TLS_LISTEN_ADDR") {
@@ -122,6 +130,7 @@ impl Config {
             s3_access_key_id: required("S3_ACCESS_KEY_ID")?,
             s3_secret_access_key: required("S3_SECRET_ACCESS_KEY")?,
             max_cache_size_bytes,
+            max_total_cache_size_bytes,
             tls,
         })
     }
@@ -330,7 +339,7 @@ async fn main() {
     };
 
     tracing::info!(
-        "gha-cache-server starting: listen={} tls_listen={} bucket={} endpoint={} max_size_bytes={}",
+        "gha-cache-server starting: listen={} tls_listen={} bucket={} endpoint={} max_size_bytes={} max_total_size_bytes={}",
         cfg.listen_addr,
         cfg.tls
             .as_ref()
@@ -338,7 +347,8 @@ async fn main() {
             .unwrap_or("disabled"),
         cfg.s3_bucket,
         cfg.s3_endpoint,
-        cfg.max_cache_size_bytes
+        cfg.max_cache_size_bytes,
+        cfg.max_total_cache_size_bytes
     );
 
     let state = Arc::new(AppState {

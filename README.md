@@ -97,6 +97,7 @@ Optional variables:
 | --- | --- | --- |
 | `LISTEN_ADDR` | `0.0.0.0:8080` | Listen address. |
 | `MAX_CACHE_SIZE_BYTES` | `10737418240` | Maximum archive and staging size in bytes (10 GiB). |
+| `MAX_TOTAL_CACHE_SIZE_BYTES` | `0` (unlimited) | Maximum total cached bytes; oldest-accessed entries are evicted automatically (LRU) on commit/finalize when exceeded. |
 
 Inject tokens and S3 credentials through the process environment.
 Do not commit them to the repository or put them in signed URLs.

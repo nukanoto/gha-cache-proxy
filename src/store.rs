@@ -324,6 +324,7 @@ mod tests {
             s3_access_key_id: "a".into(),
             s3_secret_access_key: "b".into(),
             max_cache_size_bytes: 1024,
+            max_total_cache_size_bytes: 0,
             tls: None,
         };
         build_client(&cfg)

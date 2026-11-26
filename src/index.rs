@@ -20,6 +20,16 @@ pub struct Entry {
     pub version: String,
     pub size: u64,
     pub created_at: u64,
+    /// Last access timestamp for LRU eviction. Defaulted so indices written
+    /// before this field still load cleanly (falling back to `created_at`).
+    #[serde(default)]
+    pub last_accessed_at: u64,
+}
+
+impl Entry {
+    pub fn effective_last_accessed(&self) -> u64 {
+        self.last_accessed_at.max(self.created_at)
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -77,6 +87,45 @@ impl Index {
     pub fn find_reservation(&self, id: u64) -> Option<&Reservation> {
         self.reservations.iter().find(|r| r.id == id)
     }
+
+    /// Update `last_accessed_at` in memory on a cache hit (persisted on the
+    /// next index save).
+    pub fn touch_entry(&mut self, id: u64, now: u64) {
+        if let Some(entry) = self.entries.iter_mut().find(|e| e.id == id) {
+            if now > entry.last_accessed_at {
+                entry.last_accessed_at = now;
+            }
+        }
+    }
+}
+
+/// Evict least-recently-used entries until the aggregate entry size is at most
+/// `max_total_bytes` (0 disables eviction). Never evicts `protected_id` so the
+/// entry just committed is always preserved. Returns the evicted entry IDs.
+pub fn evict_lru(entries: &mut Vec<Entry>, max_total_bytes: u64, protected_id: u64) -> Vec<u64> {
+    if max_total_bytes == 0 {
+        return Vec::new();
+    }
+    let mut total: u64 = entries
+        .iter()
+        .map(|e| e.size)
+        .fold(0u64, u64::saturating_add);
+    let mut evicted = Vec::new();
+    while total > max_total_bytes {
+        let victim_idx = entries
+            .iter()
+            .enumerate()
+            .filter(|(_, e)| e.id != protected_id)
+            .min_by_key(|(_, e)| (e.effective_last_accessed(), e.created_at, e.id))
+            .map(|(i, _)| i);
+        let Some(idx) = victim_idx else {
+            break;
+        };
+        let victim = entries.swap_remove(idx);
+        total = total.saturating_sub(victim.size);
+        evicted.push(victim.id);
+    }
+    evicted
 }
 
 /// GitHub matching order: exact primary key first, then each restore key as a
@@ -399,14 +448,17 @@ pub async fn commit_v1(state: &AppState, id: u64, size: u64) -> Result<(), Commi
         };
     };
     let mut next = idx.clone();
+    let now = unix_now();
     next.reservations.retain(|r| r.id != id);
     next.entries.push(Entry {
         id,
         key: reservation.key,
         version: reservation.version,
         size,
-        created_at: unix_now(),
+        created_at: now,
+        last_accessed_at: now,
     });
+    let evicted = evict_lru(&mut next.entries, state.cfg.max_total_cache_size_bytes, id);
     next.save(&state.store).await.map_err(|e| {
         tracing::error!("failed to persist cache index: {e}");
         CommitError::Internal
@@ -418,6 +470,13 @@ pub async fn commit_v1(state: &AppState, id: u64, size: u64) -> Result<(), Commi
     tokio::spawn(async move {
         if let Err(e) = store.delete_prefix(&store.chunk_prefix(id)).await {
             tracing::warn!("chunk cleanup failed for {id}: {e}");
+        }
+        if !evicted.is_empty() {
+            tracing::info!(count = evicted.len(), "evicted LRU cache entries");
+            let keys: Vec<String> = evicted.into_iter().map(|eid| store.archive_key(eid)).collect();
+            if let Err(e) = store.delete_many(keys).await {
+                tracing::warn!("LRU archive cleanup failed: {e}");
+            }
         }
     });
     Ok(())
@@ -497,14 +556,17 @@ pub async fn finalize_v2(
         };
     };
     let mut next = idx.clone();
+    let now = unix_now();
     next.reservations.retain(|r| r.id != id);
     next.entries.push(Entry {
         id,
         key: key.to_string(),
         version: version.to_string(),
         size: size_bytes,
-        created_at: unix_now(),
+        created_at: now,
+        last_accessed_at: now,
     });
+    let evicted = evict_lru(&mut next.entries, state.cfg.max_total_cache_size_bytes, id);
     next.save(&state.store).await.map_err(|e| {
         tracing::error!("failed to persist cache index: {e}");
         FinalizeError::Internal
@@ -516,6 +578,13 @@ pub async fn finalize_v2(
     tokio::spawn(async move {
         if let Err(e) = store.delete_prefix(&store.staging_prefix(id)).await {
             tracing::warn!("staging cleanup failed for {id}: {e}");
+        }
+        if !evicted.is_empty() {
+            tracing::info!(count = evicted.len(), "evicted LRU cache entries");
+            let keys: Vec<String> = evicted.into_iter().map(|eid| store.archive_key(eid)).collect();
+            if let Err(e) = store.delete_many(keys).await {
+                tracing::warn!("LRU archive cleanup failed: {e}");
+            }
         }
     });
     Ok(id)
@@ -532,7 +601,55 @@ mod tests {
             version: version.to_string(),
             size: 10,
             created_at,
+            last_accessed_at: created_at,
         }
+    }
+
+    #[test]
+    fn evict_lru_removes_oldest_accessed_and_protects_new_entry() {
+        let mut entries = vec![
+            Entry {
+                id: 1,
+                key: "k1".into(),
+                version: "v1".into(),
+                size: 40,
+                created_at: 100,
+                last_accessed_at: 500, // recently hit
+            },
+            Entry {
+                id: 2,
+                key: "k2".into(),
+                version: "v1".into(),
+                size: 40,
+                created_at: 200,
+                last_accessed_at: 200, // oldest effective access
+            },
+            Entry {
+                id: 3,
+                key: "k3".into(),
+                version: "v1".into(),
+                size: 40,
+                created_at: 300,
+                last_accessed_at: 300,
+            },
+        ];
+        // Limit 80 bytes: total is 120, must evict id 2 (not id 1 which was touched at 500).
+        let evicted = evict_lru(&mut entries, 80, 3);
+        assert_eq!(evicted, vec![2]);
+        assert_eq!(entries.len(), 2);
+        assert!(entries.iter().any(|e| e.id == 1));
+        assert!(entries.iter().any(|e| e.id == 3));
+
+        // Limit 10 bytes (< protected entry size 40): evicts id 1, keeps protected id 3.
+        let evicted2 = evict_lru(&mut entries, 10, 3);
+        assert_eq!(evicted2, vec![1]);
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, 3);
+
+        // Limit 0 disables eviction.
+        let evicted3 = evict_lru(&mut entries, 0, 99);
+        assert!(evicted3.is_empty());
+        assert_eq!(entries.len(), 1);
     }
 
     fn reservation(id: u64, key: &str, version: &str, created_at: u64) -> Reservation {

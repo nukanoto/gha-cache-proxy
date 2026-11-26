@@ -97,6 +97,7 @@ docker volume rm seaweedfs-data
 | --- | --- | --- |
 | `LISTEN_ADDR` | `0.0.0.0:8080` | listen address。 |
 | `MAX_CACHE_SIZE_BYTES` | `10737418240` | アーカイブと staging の最大サイズ（10 GiB）。 |
+| `MAX_TOTAL_CACHE_SIZE_BYTES` | `0`（無制限） | キャッシュ全体の総容量上限（バイト）。超過時は commit/finalize 時に最も古くアクセスされたエントリから自動で LRU 削除されます。 |
 
 token と S3 credential はプロセスの環境変数から渡してください。
 repository に commit したり、署名付き URL に含めたりしないでください。

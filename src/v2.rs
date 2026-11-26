@@ -492,8 +492,12 @@ pub async fn get_cache_entry_download_url(
         );
     }
     let hit = {
-        let idx = state.index.lock().await;
-        index::lookup(&idx.entries, &key, &restore_keys, &version).cloned()
+        let mut idx = state.index.lock().await;
+        let hit = index::lookup(&idx.entries, &key, &restore_keys, &version).cloned();
+        if let Some(ref entry) = hit {
+            idx.touch_entry(entry.id, unix_now());
+        }
+        hit
     };
     let Some(hit) = hit else {
         // Logical miss: ok:false with HTTP 200.

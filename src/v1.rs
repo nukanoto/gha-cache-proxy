@@ -37,11 +37,11 @@ pub async fn caches_get(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Response {
-    let entries = state.index.lock().await.entries.clone();
     if let Some(keys) = params.get("keys") {
-        return lookup(&state, &entries, keys, params.get("version"));
+        return lookup(&state, keys, params.get("version")).await;
     }
     if let Some(key) = params.get("key") {
+        let entries = state.index.lock().await.entries.clone();
         return list(&entries, key);
     }
     json_error(StatusCode::BAD_REQUEST, "missing keys or key parameter")
@@ -55,16 +55,10 @@ pub async fn cache_lookup(
     let Some(keys) = params.get("keys") else {
         return json_error(StatusCode::BAD_REQUEST, "missing keys parameter");
     };
-    let entries = state.index.lock().await.entries.clone();
-    lookup(&state, &entries, keys, params.get("version"))
+    lookup(&state, keys, params.get("version")).await
 }
 
-fn lookup(
-    state: &AppState,
-    entries: &[index::Entry],
-    keys: &str,
-    version: Option<&String>,
-) -> Response {
+async fn lookup(state: &AppState, keys: &str, version: Option<&String>) -> Response {
     let Some(version) = version else {
         return json_error(StatusCode::BAD_REQUEST, "missing version parameter");
     };
@@ -73,7 +67,14 @@ fn lookup(
         return json_error(StatusCode::BAD_REQUEST, "invalid keys or version");
     }
     let restore: Vec<String> = keys.iter().skip(1).map(|s| s.to_string()).collect();
-    let hit = index::lookup(entries, keys[0], &restore, version);
+    let hit = {
+        let mut idx = state.index.lock().await;
+        let hit = index::lookup(&idx.entries, keys[0], &restore, version).cloned();
+        if let Some(ref entry) = hit {
+            idx.touch_entry(entry.id, unix_now());
+        }
+        hit
+    };
     let Some(hit) = hit else {
         // 204 is the v1 miss signal; the action then logs a diagnostics list.
         return StatusCode::NO_CONTENT.into_response();
