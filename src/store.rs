@@ -87,7 +87,17 @@ impl Store {
         format!("staging/{id}/chunks/{offset}")
     }
     pub fn block_key(&self, id: u64, block_id: &str) -> String {
-        format!("staging/{id}/blocks/{block_id}")
+        // Standard base64 block IDs can contain '/' and '+'; map them to URL-safe
+        // characters so S3 gateways like SeaweedFS never treat '/' as a path separator.
+        let safe: String = block_id
+            .chars()
+            .map(|c| match c {
+                '+' => '-',
+                '/' => '_',
+                _ => c,
+            })
+            .collect();
+        format!("staging/{id}/blocks/{safe}")
     }
     pub fn staging_blob_key(&self, id: u64) -> String {
         format!("staging/{id}/blob")

@@ -355,15 +355,15 @@ async fn put_blocklist(state: &AppState, id: u64, req: Request<Body>) -> Respons
         .iter()
         .filter_map(|o| {
             let key = o.key.as_ref()?;
-            let block_id = key.rsplit('/').next()?;
-            Some((block_id.to_string(), o.size.unwrap_or(0) as u64))
+            Some((key.clone(), o.size.unwrap_or(0) as u64))
         })
         .collect();
 
     let mut parts = Vec::with_capacity(block_ids.len());
     let mut total = 0u64;
     for block_id in &block_ids {
-        let Some(size) = sizes.get(block_id) else {
+        let block_key = state.store.block_key(id, block_id);
+        let Some(size) = sizes.get(&block_key) else {
             return json_error(
                 StatusCode::BAD_REQUEST,
                 format!("unknown block in block list: {block_id}"),
@@ -378,7 +378,7 @@ async fn put_blocklist(state: &AppState, id: u64, req: Request<Body>) -> Respons
                 )
             }
         };
-        parts.push((state.store.block_key(id, block_id), *size));
+        parts.push((block_key, *size));
     }
     if total == 0 {
         return json_error(
