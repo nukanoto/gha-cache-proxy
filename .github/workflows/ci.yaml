@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Run unit tests
+        run: cargo test --locked
+
+      - name: Run clippy
+        run: cargo clippy --locked --all-targets --all-features -- -D warnings
+
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: gha-cache-server:ci
+          cache-from: type=gha
+
+      - name: Start SeaweedFS and gha-cache-server
+        run: |
+          docker network create gha-cache
+          docker volume create seaweedfs-data
+
+          docker run -d --name gha-cache-seaweedfs --network gha-cache \
+            -v seaweedfs-data:/data \
+            -e AWS_ACCESS_KEY_ID=admin \
+            -e AWS_SECRET_ACCESS_KEY=secret \
+            -e S3_BUCKET=gha-cache \
+            chrislusf/seaweedfs:4.41 mini -dir=/data
+
+          for i in $(seq 1 30); do
+            code="$(docker run --rm --network gha-cache curlimages/curl:latest -sS -o /dev/null -w '%{http_code}' http://gha-cache-seaweedfs:8333/ || true)"
+            if [ "$code" = "403" ]; then
+              break
+            fi
+            sleep 1
+          done
+
+          docker run -d --name gha-cache-server --network gha-cache \
+            -p 8080:8080 \
+            -e PUBLIC_URL=http://localhost:8080 \
+            -e AUTH_TOKEN=dev-secret-token \
+            -e S3_ENDPOINT=http://gha-cache-seaweedfs:8333 \
+            -e S3_BUCKET=gha-cache \
+            -e S3_REGION=us-east-1 \
+            -e S3_ACCESS_KEY_ID=admin \
+            -e S3_SECRET_ACCESS_KEY=secret \
+            -e MAX_CACHE_SIZE_BYTES=10485760 \
+            gha-cache-server:ci
+
+      - name: Run protocol smoke test
+        run: |
+          scripts/smoke.sh
+          docker restart gha-cache-server
+          scripts/smoke.sh --after-restart
+
+      - name: Dump logs on failure
+        if: failure()
+        run: |
+          docker logs gha-cache-server || true
+          docker logs gha-cache-seaweedfs || true

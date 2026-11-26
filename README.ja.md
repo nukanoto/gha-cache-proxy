@@ -180,14 +180,3 @@ cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
-
-ローカルのインスタンスに対して protocol smoke test を実行する場合は、超過時の拒否を検証できるよう `MAX_CACHE_SIZE_BYTES=10485760` を指定した状態で実行します。
-
-```sh
-scripts/smoke.sh
-docker restart gha-cache-server
-scripts/smoke.sh --after-restart
-```
-
-smoke test が使うのはローカルのサーバー、S3 互換バケット、`curl`、Python 標準ライブラリだけです。
-GitHub へはリクエストを送信しません。
