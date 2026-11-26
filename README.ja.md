@@ -175,9 +175,9 @@ intercept した hostname の TLS を終端し、job token を proxy 内部用�
 | `HEAD /artifacts/{token}` | 署名付き URL | archive metadata の取得。 |
 | `GET /artifacts/{token}` | 署名付き URL | archive または単一 range の download。 |
 
-v2 の JSON response は `signedUploadUrl`、`matchedKey`、`entryId` のような protobuf lowerCamelCase 名を使います。
-int64 である `entryId` は JSON では文字列になります。
-JSON request は snake_case と lowerCamelCase の両方を受け付けます。
+v2 の JSON response は GitHub 本家の Twirp サービスに合わせて `signed_upload_url`、`signed_download_url`、`matched_key`、`entry_id` のような `snake_case` 名を使います。
+int64 である `entry_id` は JSON では文字列になります。
+JSON request は `snake_case` と `lowerCamelCase` の両方を受け付けます。
 
 ## 運用上の境界
 

@@ -175,9 +175,9 @@ Use it only on a private network or with mTLS because it does not validate `ACTI
 | `HEAD /artifacts/{token}` | Signed URL | Read archive metadata. |
 | `GET /artifacts/{token}` | Signed URL | Download an archive or a single range. |
 
-v2 JSON responses use protobuf lowerCamelCase names such as `signedUploadUrl`, `matchedKey`, and `entryId`.
-The JSON representation of the int64 `entryId` is a string.
-The proxy accepts both snake_case and lowerCamelCase JSON request fields.
+v2 JSON responses use protobuf `snake_case` field names such as `signed_upload_url`, `signed_download_url`, `matched_key`, and `entry_id` (matching GitHub's Twirp service).
+The JSON representation of the int64 `entry_id` is a string.
+The server accepts both `snake_case` and `lowerCamelCase` JSON request fields.
 
 ## Operational boundaries
 

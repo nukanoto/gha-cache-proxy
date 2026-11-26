@@ -173,7 +173,7 @@ test_auth_and_limit() {
   twirp_post "$V2_CREATE" "$WORK/req.json"
   assert_status 200 "v2 create for limit test"
   local url
-  url="$(json_get signedUploadUrl)"
+  url="$(json_get signed_upload_url)"
   curl_raw -X PUT --data-binary @"$WORK/payload_over" "$url"
   case "$STATUS" in
     413) pass "oversized upload rejected with 413" ;;
@@ -284,11 +284,11 @@ test_v2_json() {
 import json, sys
 d = json.load(open(sys.argv[1]))
 assert d.get("ok") is True, d
-assert d.get("signedUploadUrl", "").startswith(sys.argv[2] + "/artifacts/"), d
+assert d.get("signed_upload_url", "").startswith(sys.argv[2] + "/artifacts/"), d
 print("ok: v2 create ok=true with signed upload URL")
 PY
   local url
-  url="$(json_get signedUploadUrl)"
+  url="$(json_get signed_upload_url)"
 
   # A duplicate reservation is a logical conflict.
   twirp_post "$V2_CREATE" "$WORK/req.json"
@@ -311,8 +311,8 @@ PY
   python3 - "$WORK/body" <<'PY' || fail "v2 finalize response"
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d.get("ok") is True and str(d.get("entryId", "")).isdigit(), d
-print("ok: v2 finalize entryId=%s" % d["entryId"])
+assert d.get("ok") is True and str(d.get("entry_id", "")).isdigit(), d
+print("ok: v2 finalize entry_id=%s" % d["entry_id"])
 PY
 
   # Resolve the archive URL; blob reads only work with a download URL
@@ -321,9 +321,9 @@ PY
   twirp_post "$V2_GET" "$WORK/req.json"
   assert_status 200 "v2 get download URL (JSON)"
   local dl
-  dl="$(json_get signedDownloadUrl)"
-  [ "$(json_get matchedKey)" = "$V2_KEY" ] || fail "v2 matchedKey mismatch"
-  pass "v2 matchedKey=$V2_KEY"
+  dl="$(json_get signed_download_url)"
+  [ "$(json_get matched_key)" = "$V2_KEY" ] || fail "v2 matched_key mismatch"
+  pass "v2 matched_key=$V2_KEY"
   case "$dl" in
     "$PROXY_URL/artifacts/"*) pass "v2 signed download URL" ;;
     *) fail "v2 download URL unexpected: $dl" ;;
@@ -374,7 +374,7 @@ PY
   printf '{"key":"%s","version":"%s"}' "$res_c" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_CREATE" "$WORK/req.json"
   assert_status 200 "v2 create restore entry"
-  curl_raw -X PUT --data-binary @"$WORK/payload_resc" "$(json_get signedUploadUrl)"
+  curl_raw -X PUT --data-binary @"$WORK/payload_resc" "$(json_get signed_upload_url)"
   assert_status 201 "v2 restore entry blob PUT"
   printf '{"key":"%s","version":"%s","size_bytes":"512"}' "$res_c" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_FINALIZE" "$WORK/req.json"
@@ -383,7 +383,7 @@ PY
   printf '{"key":"miss-%s","version":"%s","restoreKeys":["resC"]}' "$TS" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_GET" "$WORK/req.json"
   assert_status 200 "v2 restore-key prefix match"
-  [ "$(json_get matchedKey)" = "$res_c" ] || fail "v2 prefix match returned wrong key"
+  [ "$(json_get matched_key)" = "$res_c" ] || fail "v2 prefix match returned wrong key"
   pass "v2 restore-key prefix match returns $res_c"
 
   V2_SHA="$sha"
@@ -400,7 +400,7 @@ test_blob_blocks() {
   twirp_post "$V2_CREATE" "$WORK/req.json"
   assert_status 200 "v2 create for block test"
   local url
-  url="$(json_get signedUploadUrl)"
+  url="$(json_get signed_upload_url)"
 
   head -c 1024 "$payload" > "$WORK/block1"
   tail -c +1025 "$payload" > "$WORK/block2"
@@ -423,15 +423,15 @@ test_blob_blocks() {
   python3 - "$WORK/body" <<'PY' || fail "v2 finalize block-built entry response"
 import json, sys
 d = json.load(open(sys.argv[1]))
-assert d.get("ok") is True and str(d.get("entryId", "")).isdigit(), d
-print("ok: v2 finalize block-built entry entryId=%s" % d["entryId"])
+assert d.get("ok") is True and str(d.get("entry_id", "")).isdigit(), d
+print("ok: v2 finalize block-built entry entry_id=%s" % d["entry_id"])
 PY
 
   printf '{"key":"%s","version":"%s","restore_keys":[]}' "$V2_BLOCK_KEY" "$V2_VERSION" > "$WORK/req.json"
   twirp_post "$V2_GET" "$WORK/req.json"
   assert_status 200 "v2 get download URL for block-built entry"
   local dl
-  dl="$(json_get signedDownloadUrl)"
+  dl="$(json_get signed_download_url)"
 
   curl_raw -I "$dl"
   assert_status 200 "v2 blob HEAD after blocklist"
@@ -544,7 +544,7 @@ PY
   printf '{"key":"%s","version":"%s","restore_keys":[]}' "$v2_key" "$v2_version" > "$WORK/req.json"
   twirp_post "$V2_GET" "$WORK/req.json"
   assert_status 200 "v2 lookup after restart"
-  [ "$(download_sha "$(json_get signedDownloadUrl)")" = "$v2_sha" ] || fail "v2 archive content after restart"
+  [ "$(download_sha "$(json_get signed_download_url)")" = "$v2_sha" ] || fail "v2 archive content after restart"
   pass "v2 archive restored after restart"
 
   python3 twirp_proto.py encode GetCacheEntryDownloadURL --key "$pb_key" --version "$pb_version" > "$WORK/req.pb"
