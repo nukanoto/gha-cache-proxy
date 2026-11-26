@@ -52,14 +52,6 @@ Verify that the service is running:
 curl -fsS http://localhost:8080/healthz
 ```
 
-To run the protocol smoke test against a running instance (set `MAX_CACHE_SIZE_BYTES=10485760` so the smoke test can verify size-limit rejection):
-
-```sh
-scripts/smoke.sh
-docker restart gha-cache-server
-scripts/smoke.sh --after-restart
-```
-
 ## Configuration
 
 The server requires these environment variables when run directly:
@@ -186,6 +178,14 @@ For a local Rust toolchain:
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
+```
+
+To run the protocol smoke test against a local instance (configured with `MAX_CACHE_SIZE_BYTES=10485760` so size-limit rejection can be verified):
+
+```sh
+scripts/smoke.sh
+docker restart gha-cache-server
+scripts/smoke.sh --after-restart
 ```
 
 The smoke test uses only the local server, an S3-compatible bucket, `curl`, and Python's standard library.

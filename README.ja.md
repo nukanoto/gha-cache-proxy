@@ -52,14 +52,6 @@ docker run -d --name gha-cache-server \
 curl -fsS http://localhost:8080/healthz
 ```
 
-起動中のインスタンスに対して protocol smoke test を実行する場合は、超過時の拒否を検証できるよう `MAX_CACHE_SIZE_BYTES=10485760` を指定した状態で実行します。
-
-```sh
-scripts/smoke.sh
-docker restart gha-cache-server
-scripts/smoke.sh --after-restart
-```
-
 ## 設定
 
 直接起動する場合、以下の環境変数が必要です。
@@ -187,6 +179,14 @@ docker build -t gha-cache-server .
 cargo fmt --check
 cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
+```
+
+ローカルのインスタンスに対して protocol smoke test を実行する場合は、超過時の拒否を検証できるよう `MAX_CACHE_SIZE_BYTES=10485760` を指定した状態で実行します。
+
+```sh
+scripts/smoke.sh
+docker restart gha-cache-server
+scripts/smoke.sh --after-restart
 ```
 
 smoke test が使うのはローカルのサーバー、S3 互換バケット、`curl`、Python 標準ライブラリだけです。
