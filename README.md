@@ -23,70 +23,53 @@ It does not call the GitHub control plane or any upstream cache service, so cach
 ## Requirements
 
 - Docker Engine.
-- An S3-compatible object store such as SeaweedFS.
+- Any S3-compatible object storage bucket (e.g., AWS S3, Cloudflare R2, MinIO, SeaweedFS).
 - A runner or network proxy that can route cache service requests to `PUBLIC_URL`.
 - Rust 1.97.1 or later when building outside Docker.
 
 ## Installation
 
-The proxy stores objects in a dedicated SeaweedFS S3 bucket.
-The following commands start a single-node SeaweedFS instance and the proxy without a Compose file:
+`gha-cache-server` stores cache archives and metadata in any dedicated S3-compatible bucket.
+Build and start the server with your bucket credentials:
 
 ```sh
-docker network create gha-cache
-docker volume create seaweedfs-data
-
-docker run -d --name gha-cache-seaweedfs --network gha-cache \
-  -p 8333:8333 \
-  -v seaweedfs-data:/data \
-  -e AWS_ACCESS_KEY_ID=admin \
-  -e AWS_SECRET_ACCESS_KEY=secret \
-  -e S3_BUCKET=gha-cache \
-  chrislusf/seaweedfs:4.41
-
 docker build -t gha-cache-server .
-docker run -d --name gha-cache-server --network gha-cache \
+docker run -d --name gha-cache-server \
   -p 8080:8080 \
   -e PUBLIC_URL=http://localhost:8080 \
   -e AUTH_TOKEN=dev-secret-token \
-  -e S3_ENDPOINT=http://gha-cache-seaweedfs:8333 \
+  -e S3_ENDPOINT=https://s3.example.com \
   -e S3_BUCKET=gha-cache \
   -e S3_REGION=us-east-1 \
-  -e S3_ACCESS_KEY_ID=admin \
-  -e S3_SECRET_ACCESS_KEY=secret \
-  -e MAX_CACHE_SIZE_BYTES=10485760 \
+  -e S3_ACCESS_KEY_ID=your-access-key \
+  -e S3_SECRET_ACCESS_KEY=your-secret-key \
   gha-cache-server
 ```
 
-Check the service and run the protocol smoke test:
+Verify that the service is running:
 
 ```sh
 curl -fsS http://localhost:8080/healthz
+```
+
+To run the protocol smoke test against a running instance (set `MAX_CACHE_SIZE_BYTES=10485760` so the smoke test can verify size-limit rejection):
+
+```sh
 scripts/smoke.sh
 docker restart gha-cache-server
 scripts/smoke.sh --after-restart
 ```
 
-The example uses a 10 MiB cache limit so the smoke test can check rejection.
-Override `MAX_CACHE_SIZE_BYTES` with the production limit before deploying.
-Remove the containers and the SeaweedFS volume when finished:
-
-```sh
-docker rm -f gha-cache-server gha-cache-seaweedfs
-docker network rm gha-cache
-docker volume rm seaweedfs-data
-```
-
 ## Configuration
 
-The proxy requires these environment variables when run directly:
+The server requires these environment variables when run directly:
 
 | Variable | Description |
 | --- | --- |
 | `PUBLIC_URL` | URL reachable by the runner; used to create signed blob URLs. |
 | `AUTH_TOKEN` | Bearer token accepted by the control APIs. |
-| `S3_ENDPOINT` | S3-compatible endpoint such as `https://seaweedfs.example:8333`. |
-| `S3_BUCKET` | Dedicated bucket used by the proxy. |
+| `S3_ENDPOINT` | S3-compatible endpoint URL such as `https://s3.example.com`. |
+| `S3_BUCKET` | Dedicated S3 bucket used by the server. |
 | `S3_REGION` | S3 region such as `us-east-1`. |
 | `S3_ACCESS_KEY_ID` | S3 access key. |
 | `S3_SECRET_ACCESS_KEY` | S3 secret key. |
@@ -124,10 +107,10 @@ For a workflow-compatible deployment, build a runner image with a small patch to
 Apply the override after the existing `CacheServerUrl` and `ResultsServiceUrl` assignments in `NodeScriptActionHandler` and `ContainerActionHandler`:
 
 ```csharp
-var proxyUrl = System.Environment.GetEnvironmentVariable("GHA_CACHE_PROXY_URL");
-if (!string.IsNullOrWhiteSpace(proxyUrl))
+var serverUrl = System.Environment.GetEnvironmentVariable("GHA_CACHE_SERVER_URL");
+if (!string.IsNullOrWhiteSpace(serverUrl))
 {
-    var url = proxyUrl.TrimEnd('/') + "/";
+    var url = serverUrl.TrimEnd('/') + "/";
     Environment["ACTIONS_CACHE_URL"] = url;
     Environment["ACTIONS_RESULTS_URL"] = url;
 }
@@ -136,7 +119,7 @@ if (!string.IsNullOrWhiteSpace(proxyUrl))
 Set the private override in the runner image or in the controller that launches it:
 
 ```text
-GHA_CACHE_PROXY_URL=http://gha-cache-server:8080
+GHA_CACHE_SERVER_URL=http://gha-cache-server:8080
 ```
 
 Point the controller at the patched image:
@@ -182,9 +165,9 @@ The server accepts both `snake_case` and `lowerCamelCase` JSON request fields.
 
 ## Operational boundaries
 
-- Use one proxy replica with one dedicated S3 bucket.
+- Use one server replica with one dedicated S3 bucket.
 - Metadata and reservations are stored in one `index.json` object protected by a process-local lock.
-- The proxy does not provide eviction, garbage collection, or automatic cleanup of abandoned staging objects.
+- Automatic LRU eviction is enabled when `MAX_TOTAL_CACHE_SIZE_BYTES` is set; abandoned staging objects are not automatically cleaned up.
 - Cache misses return HTTP 204 for v1 and `ok: false` for v2.
 - Signed blob URLs expire and contain no S3 credentials.
 - Range support covers one `start-end` or open-ended range; suffix and multi-range requests are not supported.
@@ -205,5 +188,5 @@ cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
-The smoke test uses only the local proxy, SeaweedFS, `curl`, and Python's standard library.
+The smoke test uses only the local server, an S3-compatible bucket, `curl`, and Python's standard library.
 It does not send requests to GitHub.

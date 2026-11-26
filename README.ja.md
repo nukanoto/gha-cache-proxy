@@ -23,58 +23,41 @@ GitHub の control plane や upstream の cache service へは接続しないた
 ## Requirements
 
 - Docker Engine。
-- SeaweedFS などの S3 互換 object storage。
+- 任意の S3 互換オブジェクトストレージのバケット（AWS S3、Cloudflare R2、MinIO、SeaweedFS など）。
 - cache service のリクエストを `PUBLIC_URL` へ送れる runner または network proxy。
 - Docker の外で build する場合は Rust 1.97.1 以上。
 
 ## インストール
 
-プロキシは、専用の SeaweedFS S3 bucket へ object を保存します。
-以下のコマンドで、Compose file を使わずに単一ノードの SeaweedFS とプロキシを起動できます。
+`gha-cache-server` は、任意の専用 S3 互換バケットへキャッシュアーカイブとメタデータを保存します。
+利用する S3 バケットの接続情報を渡して起動します。
 
 ```sh
-docker network create gha-cache
-docker volume create seaweedfs-data
-
-docker run -d --name gha-cache-seaweedfs --network gha-cache \
-  -p 8333:8333 \
-  -v seaweedfs-data:/data \
-  -e AWS_ACCESS_KEY_ID=admin \
-  -e AWS_SECRET_ACCESS_KEY=secret \
-  -e S3_BUCKET=gha-cache \
-  chrislusf/seaweedfs:4.41
-
 docker build -t gha-cache-server .
-docker run -d --name gha-cache-server --network gha-cache \
+docker run -d --name gha-cache-server \
   -p 8080:8080 \
   -e PUBLIC_URL=http://localhost:8080 \
   -e AUTH_TOKEN=dev-secret-token \
-  -e S3_ENDPOINT=http://gha-cache-seaweedfs:8333 \
+  -e S3_ENDPOINT=https://s3.example.com \
   -e S3_BUCKET=gha-cache \
   -e S3_REGION=us-east-1 \
-  -e S3_ACCESS_KEY_ID=admin \
-  -e S3_SECRET_ACCESS_KEY=secret \
-  -e MAX_CACHE_SIZE_BYTES=10485760 \
+  -e S3_ACCESS_KEY_ID=your-access-key \
+  -e S3_SECRET_ACCESS_KEY=your-secret-key \
   gha-cache-server
 ```
 
-サービスの起動を確認し、protocol smoke test を実行します。
+サービスの起動を確認します。
 
 ```sh
 curl -fsS http://localhost:8080/healthz
+```
+
+起動中のインスタンスに対して protocol smoke test を実行する場合は、超過時の拒否を検証できるよう `MAX_CACHE_SIZE_BYTES=10485760` を指定した状態で実行します。
+
+```sh
 scripts/smoke.sh
 docker restart gha-cache-server
 scripts/smoke.sh --after-restart
-```
-
-この例では、超過時の拒否を smoke test で検証できるよう、キャッシュ上限を 10 MiB に設定しています。
-本番環境では `MAX_CACHE_SIZE_BYTES` を実際の上限へ変更してください。
-終了時に container と SeaweedFS の volume を削除します。
-
-```sh
-docker rm -f gha-cache-server gha-cache-seaweedfs
-docker network rm gha-cache
-docker volume rm seaweedfs-data
 ```
 
 ## 設定
@@ -85,8 +68,8 @@ docker volume rm seaweedfs-data
 | --- | --- |
 | `PUBLIC_URL` | runner から到達できる URL。署名付き blob URL の生成に使います。 |
 | `AUTH_TOKEN` | control API が受け付ける Bearer token。 |
-| `S3_ENDPOINT` | `https://seaweedfs.example:8333` などの S3 互換 endpoint。 |
-| `S3_BUCKET` | プロキシ専用の bucket。 |
+| `S3_ENDPOINT` | `https://s3.example.com` などの S3 互換 endpoint。 |
+| `S3_BUCKET` | サーバー専用の S3 バケット。 |
 | `S3_REGION` | `us-east-1` などの S3 region。 |
 | `S3_ACCESS_KEY_ID` | S3 access key。 |
 | `S3_SECRET_ACCESS_KEY` | S3 secret key。 |
@@ -124,10 +107,10 @@ workflow を変更しない構成では、`actions/runner` に小さな patch �
 `NodeScriptActionHandler` と `ContainerActionHandler` で、既存の `CacheServerUrl` と `ResultsServiceUrl` の設定後に以下を実行します。
 
 ```csharp
-var proxyUrl = System.Environment.GetEnvironmentVariable("GHA_CACHE_PROXY_URL");
-if (!string.IsNullOrWhiteSpace(proxyUrl))
+var serverUrl = System.Environment.GetEnvironmentVariable("GHA_CACHE_SERVER_URL");
+if (!string.IsNullOrWhiteSpace(serverUrl))
 {
-    var url = proxyUrl.TrimEnd('/') + "/";
+    var url = serverUrl.TrimEnd('/') + "/";
     Environment["ACTIONS_CACHE_URL"] = url;
     Environment["ACTIONS_RESULTS_URL"] = url;
 }
@@ -136,7 +119,7 @@ if (!string.IsNullOrWhiteSpace(proxyUrl))
 runner image または runner を起動する controller で、独自の環境変数を設定します。
 
 ```text
-GHA_CACHE_PROXY_URL=http://gha-cache-server:8080
+GHA_CACHE_SERVER_URL=http://gha-cache-server:8080
 ```
 
 controller には patch 済み image を指定します。
@@ -182,9 +165,9 @@ JSON request は `snake_case` と `lowerCamelCase` の両方を受け付けま�
 
 ## 運用上の境界
 
-- 1 個の proxy と 1 個の専用 S3 bucket を使ってください。
+- 1 個のサーバーと 1 個の専用 S3 bucket を使ってください。
 - metadata と予約状態は、process-local lock で保護した 1 個の `index.json` object に保存します。
-- eviction、garbage collection、放棄された staging object の自動削除は提供しません。
+- `MAX_TOTAL_CACHE_SIZE_BYTES` を設定すると LRU による自動削除が有効になります。放棄された staging object の自動削除は提供しません。
 - cache miss は v1 では HTTP 204、v2 では `ok: false` で返します。
 - 署名付き blob URL は期限付きで、S3 credential を含みません。
 - Range は 1 個の `start-end` または open-ended range に対応します。
@@ -206,5 +189,5 @@ cargo test --locked
 cargo clippy --locked --all-targets --all-features -- -D warnings
 ```
 
-smoke test が使うのはローカルの proxy、SeaweedFS、`curl`、Python 標準ライブラリだけです。
+smoke test が使うのはローカルのサーバー、S3 互換バケット、`curl`、Python 標準ライブラリだけです。
 GitHub へはリクエストを送信しません。
