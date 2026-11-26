@@ -6,7 +6,7 @@
 artifactcache.actions.githubusercontent.com, results-receiver.actions.githubusercontent.com {
 	tls internal
 
-	reverse_proxy gha-cache-proxy:8080 {
+	reverse_proxy gha-cache-server:8080 {
 		# The Rust proxy uses a fixed internal token in this example.
 		header_up Authorization "Bearer {$CACHE_PROXY_AUTH_TOKEN}"
 		flush_interval -1

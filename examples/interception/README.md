@@ -1,12 +1,12 @@
 # Caddy interception
 
-This example routes the cache and results service hostnames used by a self-hosted runner to `gha-cache-proxy` without changing a workflow.
+This example routes the cache and results service hostnames used by a self-hosted runner to `gha-cache-server` without changing a workflow.
 It uses Caddy for TLS termination and DNS interception for the runner.
 
 ## Request flow
 
 ```text
-runner -> original cache/results hostname -> Caddy -> gha-cache-proxy -> SeaweedFS
+runner -> original cache/results hostname -> Caddy -> gha-cache-server -> SeaweedFS
 ```
 
 The example deliberately replaces the incoming job Bearer token with a fixed internal token because the proxy currently authenticates control APIs with `AUTH_TOKEN`.
@@ -71,7 +71,7 @@ Set the proxy's public URL to a hostname routed to Caddy:
 PUBLIC_URL=https://artifactcache.actions.githubusercontent.com
 ```
 
-The Caddy upstream name `gha-cache-proxy` must resolve to the Rust proxy on the Caddy network.
+The Caddy upstream name `gha-cache-server` must resolve to the Rust proxy on the Caddy network.
 
 ## DNS and certificates
 

@@ -1,10 +1,10 @@
-# gha-cache-proxy
+# gha-cache-server
 
 [日本語](README.ja.md)
 
 ## Overview
 
-`gha-cache-proxy` is a Rust service that implements the GitHub Actions cache v1 REST API and v2 Twirp API while storing cache archives in S3-compatible object storage.
+`gha-cache-server` is a Rust service that implements the GitHub Actions cache v1 REST API and v2 Twirp API while storing cache archives in S3-compatible object storage.
 
 The proxy connects only to the configured S3 endpoint.
 It does not call the GitHub control plane or any upstream cache service, so cache operations do not consume GitHub API rate limits.
@@ -44,8 +44,8 @@ docker run -d --name gha-cache-seaweedfs --network gha-cache \
   -e S3_BUCKET=gha-cache \
   chrislusf/seaweedfs:4.41
 
-docker build -t gha-cache-proxy .
-docker run -d --name gha-cache-proxy --network gha-cache \
+docker build -t gha-cache-server .
+docker run -d --name gha-cache-server --network gha-cache \
   -p 8080:8080 \
   -e PUBLIC_URL=http://localhost:8080 \
   -e AUTH_TOKEN=dev-secret-token \
@@ -55,7 +55,7 @@ docker run -d --name gha-cache-proxy --network gha-cache \
   -e S3_ACCESS_KEY_ID=admin \
   -e S3_SECRET_ACCESS_KEY=secret \
   -e MAX_CACHE_SIZE_BYTES=10485760 \
-  gha-cache-proxy
+  gha-cache-server
 ```
 
 Check the service and run the protocol smoke test:
@@ -63,7 +63,7 @@ Check the service and run the protocol smoke test:
 ```sh
 curl -fsS http://localhost:8080/healthz
 scripts/smoke.sh
-docker restart gha-cache-proxy
+docker restart gha-cache-server
 scripts/smoke.sh --after-restart
 ```
 
@@ -72,7 +72,7 @@ Override `MAX_CACHE_SIZE_BYTES` with the production limit before deploying.
 Remove the containers and the SeaweedFS volume when finished:
 
 ```sh
-docker rm -f gha-cache-proxy gha-cache-seaweedfs
+docker rm -f gha-cache-server gha-cache-seaweedfs
 docker network rm gha-cache
 docker volume rm seaweedfs-data
 ```
@@ -135,7 +135,7 @@ if (!string.IsNullOrWhiteSpace(proxyUrl))
 Set the private override in the runner image or in the controller that launches it:
 
 ```text
-GHA_CACHE_PROXY_URL=http://gha-cache-proxy:8080
+GHA_CACHE_PROXY_URL=http://gha-cache-server:8080
 ```
 
 Point the controller at the patched image:
@@ -193,7 +193,7 @@ The proxy accepts both snake_case and lowerCamelCase JSON request fields.
 Build the release image:
 
 ```sh
-docker build -t gha-cache-proxy .
+docker build -t gha-cache-server .
 ```
 
 For a local Rust toolchain:

@@ -1007,7 +1007,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gha-cache-proxy"
+name = "gha-cache-server"
 version = "0.1.0"
 dependencies = [
  "aws-sdk-s3",

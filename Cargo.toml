@@ -1,8 +1,8 @@
 [package]
-name = "gha-cache-proxy"
+name = "gha-cache-server"
 version = "0.1.0"
 edition = "2021"
-description = "Local S3-backed cache proxy for GitHub Actions cache v1 REST and v2 Twirp"
+description = "Local S3-backed cache server for GitHub Actions cache v1 REST and v2 Twirp"
 license = "MIT"
 
 [dependencies]

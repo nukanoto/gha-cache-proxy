@@ -48,7 +48,7 @@ fn mode_char(mode: Mode) -> u8 {
 fn signing_key(auth_token: &str) -> Hmac<Sha256> {
     let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(auth_token.as_bytes())
         .expect("hmac accepts any key length");
-    mac.update(b"gha-cache-proxy blob signing v1");
+    mac.update(b"gha-cache-server blob signing v1");
     let derived = mac.finalize().into_bytes();
     Hmac::new_from_slice(&derived).expect("hmac accepts any key length")
 }
@@ -415,10 +415,17 @@ async fn put_blocklist(state: &AppState, id: u64, req: Request<Body>) -> Respons
 }
 
 fn created() -> Response {
-    // Azure answers 201 with an ETag; the SDK only checks the status.
+    // Azure answers 201 with an ETag and x-ms-request-id; clients like
+    // go-actions-cache dereference resp.RequestID after UploadStream.
     (
         StatusCode::CREATED,
-        [(header::ETAG, format!("\"{}\"", Uuid::new_v4()))],
+        [
+            (header::ETAG, format!("\"{}\"", Uuid::new_v4())),
+            (
+                header::HeaderName::from_static("x-ms-request-id"),
+                Uuid::new_v4().to_string(),
+            ),
+        ],
     )
         .into_response()
 }

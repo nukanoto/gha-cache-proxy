@@ -134,10 +134,23 @@ fn respond<T: Message + Serialize>(content_type: &str, message: &T) -> Response 
             .into_response()
     } else {
         let mut value = serde_json::to_value(message).unwrap_or_default();
-        // Protobuf JSON represents int64 values as strings for JavaScript safety.
-        if let Some(entry_id) = value.get("entryId").and_then(|v| v.as_i64()) {
-            if let Some(object) = value.as_object_mut() {
-                object.insert("entryId".into(), serde_json::json!(entry_id.to_string()));
+        if let Some(object) = value.as_object_mut() {
+            // Protobuf JSON represents int64 values as strings for JavaScript safety.
+            if let Some(entry_id) = object.get("entryId").and_then(|v| v.as_i64()) {
+                let s = serde_json::json!(entry_id.to_string());
+                object.insert("entryId".into(), s.clone());
+                object.insert("entry_id".into(), s);
+            }
+            // Also emit snake_case aliases for clients like BuildKit's go-actions-cache
+            // that unmarshal Twirp JSON responses using snake_case struct tags.
+            for (camel, snake) in [
+                ("signedUploadUrl", "signed_upload_url"),
+                ("signedDownloadUrl", "signed_download_url"),
+                ("matchedKey", "matched_key"),
+            ] {
+                if let Some(v) = object.get(camel).cloned() {
+                    object.insert(snake.into(), v);
+                }
             }
         }
         (
@@ -607,7 +620,26 @@ mod tests {
             .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(value["entryId"], "99");
+        assert_eq!(value["entry_id"], "99");
         assert_eq!(value["ok"], true);
+
+        let create_resp = respond(
+            "application/json",
+            &CreateCacheEntryResponse {
+                ok: true,
+                signed_upload_url: "https://example/artifacts/u".into(),
+                message: String::new(),
+            },
+        );
+        let create_bytes = axum::body::to_bytes(create_resp.into_body(), 4096)
+            .await
+            .unwrap();
+        let create_json: serde_json::Value = serde_json::from_slice(&create_bytes).unwrap();
+        assert_eq!(create_json["signedUploadUrl"], "https://example/artifacts/u");
+        assert_eq!(
+            create_json["signed_upload_url"],
+            "https://example/artifacts/u"
+        );
     }
 
     #[test]

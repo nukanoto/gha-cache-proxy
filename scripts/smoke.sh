@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# End-to-end smoke test for gha-cache-proxy against running services.
+# End-to-end smoke test for gha-cache-server against running services.
 # Phase 1 (default): full protocol coverage. Phase 2 (--after-restart):
 # re-verifies persisted entries after the proxy container was restarted.
 # Uses only curl and the Python standard library; never talks to GitHub.
@@ -10,7 +10,7 @@ cd "$(dirname "$0")"
 
 PROXY_URL="${PROXY_URL:-http://localhost:8080}"
 AUTH_TOKEN="${AUTH_TOKEN:-dev-secret-token}"
-STATE_FILE="${SMOKE_STATE_FILE:-/tmp/gha-cache-proxy-smoke-state.json}"
+STATE_FILE="${SMOKE_STATE_FILE:-/tmp/gha-cache-server-smoke-state.json}"
 TS="$(date +%s)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT

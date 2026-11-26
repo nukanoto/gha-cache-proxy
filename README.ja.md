@@ -1,10 +1,10 @@
-# gha-cache-proxy
+# gha-cache-server
 
 [English](README.md)
 
 ## 概要
 
-`gha-cache-proxy` は、GitHub Actions cache v1 の REST API と v2 の Twirp API を実装し、キャッシュアーカイブを S3 互換ストレージへ保存する Rust サービスです。
+`gha-cache-server` は、GitHub Actions cache v1 の REST API と v2 の Twirp API を実装し、キャッシュアーカイブを S3 互換ストレージへ保存する Rust サービスです。
 
 プロキシが接続する先は、設定した S3 エンドポイントだけです。
 GitHub の control plane や upstream の cache service へは接続しないため、キャッシュ操作で GitHub API のレート制限を消費しません。
@@ -44,8 +44,8 @@ docker run -d --name gha-cache-seaweedfs --network gha-cache \
   -e S3_BUCKET=gha-cache \
   chrislusf/seaweedfs:4.41
 
-docker build -t gha-cache-proxy .
-docker run -d --name gha-cache-proxy --network gha-cache \
+docker build -t gha-cache-server .
+docker run -d --name gha-cache-server --network gha-cache \
   -p 8080:8080 \
   -e PUBLIC_URL=http://localhost:8080 \
   -e AUTH_TOKEN=dev-secret-token \
@@ -55,7 +55,7 @@ docker run -d --name gha-cache-proxy --network gha-cache \
   -e S3_ACCESS_KEY_ID=admin \
   -e S3_SECRET_ACCESS_KEY=secret \
   -e MAX_CACHE_SIZE_BYTES=10485760 \
-  gha-cache-proxy
+  gha-cache-server
 ```
 
 サービスの起動を確認し、protocol smoke test を実行します。
@@ -63,7 +63,7 @@ docker run -d --name gha-cache-proxy --network gha-cache \
 ```sh
 curl -fsS http://localhost:8080/healthz
 scripts/smoke.sh
-docker restart gha-cache-proxy
+docker restart gha-cache-server
 scripts/smoke.sh --after-restart
 ```
 
@@ -72,7 +72,7 @@ scripts/smoke.sh --after-restart
 終了時に container と SeaweedFS の volume を削除します。
 
 ```sh
-docker rm -f gha-cache-proxy gha-cache-seaweedfs
+docker rm -f gha-cache-server gha-cache-seaweedfs
 docker network rm gha-cache
 docker volume rm seaweedfs-data
 ```
@@ -135,7 +135,7 @@ if (!string.IsNullOrWhiteSpace(proxyUrl))
 runner image または runner を起動する controller で、独自の環境変数を設定します。
 
 ```text
-GHA_CACHE_PROXY_URL=http://gha-cache-proxy:8080
+GHA_CACHE_PROXY_URL=http://gha-cache-server:8080
 ```
 
 controller には patch 済み image を指定します。
@@ -194,7 +194,7 @@ JSON request は snake_case と lowerCamelCase の両方を受け付けます。
 release image を build します。
 
 ```sh
-docker build -t gha-cache-proxy .
+docker build -t gha-cache-server .
 ```
 
 ローカルの Rust toolchain を使う場合は、以下を実行します。

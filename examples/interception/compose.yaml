@@ -21,7 +21,7 @@ services:
     build:
       context: ../..
       dockerfile: Dockerfile
-    image: gha-cache-proxy:interception
+    image: gha-cache-server:interception
     environment:
       LISTEN_ADDR: 0.0.0.0:8080
       PUBLIC_URL: ${PUBLIC_URL}
@@ -37,7 +37,7 @@ services:
     networks:
       cache:
         aliases:
-          - gha-cache-proxy
+          - gha-cache-server
 
   caddy:
     image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648

@@ -1,4 +1,4 @@
-//! gha-cache-proxy: local S3-backed cache proxy for GitHub Actions cache v1/v2.
+//! gha-cache-server: local S3-backed cache server for GitHub Actions cache v1/v2.
 //!
 //! In plain HTTP mode (`LISTEN_ADDR`), the service only talks to the configured
 //! S3-compatible endpoint. When `TLS_LISTEN_ADDR` is also set, it terminates
@@ -240,7 +240,7 @@ fn cache_router(state: Arc<AppState>) -> Router {
         .with_state(state)
 }
 
-/// Built-in healthcheck probe (`gha-cache-proxy --healthcheck`) so containers do
+/// Built-in healthcheck probe (`gha-cache-server --healthcheck`) so containers do
 /// not need curl installed.
 fn run_healthcheck() -> i32 {
     let listen = std::env::var("LISTEN_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string());
@@ -330,7 +330,7 @@ async fn main() {
     };
 
     tracing::info!(
-        "gha-cache-proxy starting: listen={} tls_listen={} bucket={} endpoint={} max_size_bytes={}",
+        "gha-cache-server starting: listen={} tls_listen={} bucket={} endpoint={} max_size_bytes={}",
         cfg.listen_addr,
         cfg.tls
             .as_ref()

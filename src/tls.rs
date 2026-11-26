@@ -89,7 +89,7 @@ fn create_ephemeral_ca() -> Result<(Certificate, KeyPair, String, CertificateDer
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
     params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     let mut dn = DistinguishedName::new();
-    dn.push(DnType::CommonName, "gha-cache-proxy Local CA");
+    dn.push(DnType::CommonName, "gha-cache-server Local CA");
     params.distinguished_name = dn;
 
     let ca_cert = params
