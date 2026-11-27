@@ -135,24 +135,6 @@ This patch leaves workflows unchanged, but the runner image must be rebuilt when
 [`examples/interception/`](examples/interception/) contains a self-contained Compose example using `gha-cache-server`'s built-in TLS termination, local CA generation, `results-receiver` passthrough, SeaweedFS, and an ephemeral official runner.
 Keep the listener on a private network.
 
-## API surface
-
-| Method and path | Authentication | Purpose |
-| --- | --- | --- |
-| `GET /healthz` | None | Liveness endpoint. |
-| `POST /_apis/artifactcache/caches` | Bearer | Reserve a v1 cache. |
-| `PATCH /_apis/artifactcache/caches/{cacheId}` | Bearer | Upload a v1 archive chunk. |
-| `POST /_apis/artifactcache/caches/{cacheId}` | Bearer | Commit a v1 cache. |
-| `GET /_apis/artifactcache/cache?keys=&version=` | Bearer | Look up a v1 cache. |
-| `GET /_apis/artifactcache/caches?key=` | Bearer | List v1 cache entries for diagnostics. |
-| `POST /twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry` | Bearer | Reserve a v2 cache. |
-| `POST /twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload` | Bearer | Finalize a v2 cache. |
-| `POST /twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL` | Bearer | Look up a v2 cache. |
-| `PUT /artifacts/{token}` | Signed URL | Upload an archive or block. |
-| `PUT /artifacts/{token}?comp=blocklist` | Signed URL | Assemble an Azure block upload. |
-| `HEAD /artifacts/{token}` | Signed URL | Read archive metadata. |
-| `GET /artifacts/{token}` | Signed URL | Download an archive or a single range. |
-
 ## Build and validation
 
 ```sh

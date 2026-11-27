@@ -135,24 +135,6 @@ runner:
 [`examples/interception/`](examples/interception/) に、`gha-cache-server` 内蔵の TLS 終端・ローカル CA 生成・`results-receiver` 中継・SeaweedFS・公式 runner を組み合わせた Compose example があります。
 プライベートネットワーク内で利用してください。
 
-## API
-
-| Method と path | 認証 | 用途 |
-| --- | --- | --- |
-| `GET /healthz` | なし | liveness endpoint。 |
-| `POST /_apis/artifactcache/caches` | Bearer | v1 cache の予約。 |
-| `PATCH /_apis/artifactcache/caches/{cacheId}` | Bearer | v1 archive chunk の upload。 |
-| `POST /_apis/artifactcache/caches/{cacheId}` | Bearer | v1 cache の commit。 |
-| `GET /_apis/artifactcache/cache?keys=&version=` | Bearer | v1 cache の検索。 |
-| `GET /_apis/artifactcache/caches?key=` | Bearer | v1 cache の診断用一覧。 |
-| `POST /twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry` | Bearer | v2 cache の予約。 |
-| `POST /twirp/github.actions.results.api.v1.CacheService/FinalizeCacheEntryUpload` | Bearer | v2 cache の finalize。 |
-| `POST /twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL` | Bearer | v2 cache の検索。 |
-| `PUT /artifacts/{token}` | 署名付き URL | archive または block の upload。 |
-| `PUT /artifacts/{token}?comp=blocklist` | 署名付き URL | Azure block upload の組み立て。 |
-| `HEAD /artifacts/{token}` | 署名付き URL | archive metadata の取得。 |
-| `GET /artifacts/{token}` | 署名付き URL | archive または単一 range の download。 |
-
 ## Build と検証
 
 ```sh
