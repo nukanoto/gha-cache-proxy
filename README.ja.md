@@ -109,7 +109,7 @@ controller には patch 済み image を指定します。
 
 ```yaml
 runner:
-  image: ghcr.io/example/actions-runner-cache@sha256:<digest>
+  image: actions-runner-patched
 ```
 
 `PUBLIC_URL` には job から到達できる同じ URL を設定します。

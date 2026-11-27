@@ -109,7 +109,7 @@ Point the controller at the patched image:
 
 ```yaml
 runner:
-  image: ghcr.io/example/actions-runner-cache@sha256:<digest>
+  image: actions-runner-patched
 ```
 
 Set `PUBLIC_URL` to the same URL that the job can reach.
