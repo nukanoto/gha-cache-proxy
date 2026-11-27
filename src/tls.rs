@@ -80,7 +80,8 @@ pub fn load_or_generate(
     })
 }
 
-fn create_ephemeral_ca() -> Result<(Certificate, KeyPair, String, CertificateDer<'static>), String> {
+fn create_ephemeral_ca() -> Result<(Certificate, KeyPair, String, CertificateDer<'static>), String>
+{
     let ca_key = KeyPair::generate().map_err(|e| format!("generate CA key: {e}"))?;
     let mut params = CertificateParams::default();
     let now = OffsetDateTime::now_utc();
@@ -141,9 +142,7 @@ fn write_atomic(path: &Path, data: &[u8], mode: u32) -> Result<(), String> {
     }
     let tmp_name = format!(
         ".{}.tmp.{}",
-        path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("cert"),
+        path.file_name().and_then(|n| n.to_str()).unwrap_or("cert"),
         std::process::id()
     );
     let tmp_path = path.with_file_name(tmp_name);

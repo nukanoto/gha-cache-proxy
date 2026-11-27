@@ -106,16 +106,15 @@ fn collect_connection_headers(headers: &axum::http::HeaderMap) -> HashSet<String
     set
 }
 
-pub async fn handle(
-    State(state): State<InterceptState>,
-    mut req: Request<Body>,
-) -> Response {
+pub async fn handle(State(state): State<InterceptState>, mut req: Request<Body>) -> Response {
     let method = req.method().clone();
     let host = request_host(&req);
     let orig_path = req.uri().path().to_string();
 
     // Check whether this request (with optional /<job-id>/ prefix) belongs to local cache APIs.
-    let normalized = strip_job_path_prefix(&orig_path).unwrap_or(&orig_path).to_string();
+    let normalized = strip_job_path_prefix(&orig_path)
+        .unwrap_or(&orig_path)
+        .to_string();
     if is_local_cache_path(&normalized) {
         if normalized != orig_path {
             match rewrite_uri_path(req.uri(), &normalized) {
@@ -226,7 +225,9 @@ mod tests {
             Some("/_apis/artifactcache/caches")
         );
         assert_eq!(
-            strip_job_path_prefix("/abc123/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry"),
+            strip_job_path_prefix(
+                "/abc123/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry"
+            ),
             Some("/twirp/github.actions.results.api.v1.CacheService/CreateCacheEntry")
         );
         assert_eq!(
@@ -235,7 +236,9 @@ mod tests {
         );
         assert_eq!(strip_job_path_prefix("/_apis/artifactcache/caches"), None);
         assert_eq!(
-            strip_job_path_prefix("/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact"),
+            strip_job_path_prefix(
+                "/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact"
+            ),
             None
         );
         assert_eq!(strip_job_path_prefix("/abc/other/path"), None);
@@ -324,7 +327,10 @@ mod tests {
         let req2 = Request::builder()
             .method("POST")
             .uri("/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact?x=1")
-            .header(header::HOST, "results-receiver.actions.githubusercontent.com")
+            .header(
+                header::HOST,
+                "results-receiver.actions.githubusercontent.com",
+            )
             .header(header::AUTHORIZATION, "Bearer gh-jwt-123")
             .body(Body::from("hello-artifact"))
             .unwrap();

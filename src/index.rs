@@ -473,7 +473,10 @@ pub async fn commit_v1(state: &AppState, id: u64, size: u64) -> Result<(), Commi
         }
         if !evicted.is_empty() {
             tracing::info!(count = evicted.len(), "evicted LRU cache entries");
-            let keys: Vec<String> = evicted.into_iter().map(|eid| store.archive_key(eid)).collect();
+            let keys: Vec<String> = evicted
+                .into_iter()
+                .map(|eid| store.archive_key(eid))
+                .collect();
             if let Err(e) = store.delete_many(keys).await {
                 tracing::warn!("LRU archive cleanup failed: {e}");
             }
@@ -581,7 +584,10 @@ pub async fn finalize_v2(
         }
         if !evicted.is_empty() {
             tracing::info!(count = evicted.len(), "evicted LRU cache entries");
-            let keys: Vec<String> = evicted.into_iter().map(|eid| store.archive_key(eid)).collect();
+            let keys: Vec<String> = evicted
+                .into_iter()
+                .map(|eid| store.archive_key(eid))
+                .collect();
             if let Err(e) = store.delete_many(keys).await {
                 tracing::warn!("LRU archive cleanup failed: {e}");
             }

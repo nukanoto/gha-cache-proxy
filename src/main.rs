@@ -112,7 +112,11 @@ impl Config {
             None if tls.is_some() => {
                 // TLS intercept mode accepts runner requests directly without a shared
                 // static bearer token; mint an internal secret for blob URL HMAC signing.
-                let secret = format!("{}{}", uuid::Uuid::new_v4().simple(), uuid::Uuid::new_v4().simple());
+                let secret = format!(
+                    "{}{}",
+                    uuid::Uuid::new_v4().simple(),
+                    uuid::Uuid::new_v4().simple()
+                );
                 (secret, false)
             }
             None => return Err("missing required env AUTH_TOKEN".to_string()),
