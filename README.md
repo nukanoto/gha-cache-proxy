@@ -70,7 +70,10 @@ Optional variables:
 
 | Variable | Default | Description |
 | --- | --- | --- |
-| `LISTEN_ADDR` | `0.0.0.0:8080` | Listen address. |
+| `LISTEN_ADDR` | `0.0.0.0:8080` | Plain HTTP listen address. |
+| `TLS_LISTEN_ADDR` | unset | Enables built-in TLS interception and `results-receiver` passthrough (e.g., `0.0.0.0:443`). |
+| `TLS_CA_CERT_OUT` | unset | Path where the generated local CA public certificate is written (e.g., `/runner-ca/root.crt`). |
+| `TLS_DATA_DIR` | unset | Directory to persist the generated local CA key and certificate across restarts. |
 | `MAX_CACHE_SIZE_BYTES` | `10737418240` | Maximum archive and staging size in bytes (10 GiB). |
 | `MAX_TOTAL_CACHE_SIZE_BYTES` | `0` (unlimited) | Maximum total cached bytes; oldest-accessed entries are evicted automatically (LRU) on commit/finalize when exceeded. |
 
@@ -129,9 +132,8 @@ This patch leaves workflows unchanged, but the runner image must be rebuilt when
 
 ## Interception example
 
-[`examples/interception/`](examples/interception/) contains a Caddy, DNS, and official runner Compose example.
-It terminates TLS for the intercepted hostnames and replaces the incoming job token with the proxy's private internal token.
-Use it only on a private network or with mTLS because it does not validate `ACTIONS_RUNTIME_TOKEN`.
+[`examples/interception/`](examples/interception/) contains a self-contained Compose example using `gha-cache-server`'s built-in TLS termination, local CA generation, `results-receiver` passthrough, SeaweedFS, and an ephemeral official runner.
+Keep the listener on a private network.
 
 ## API surface
 

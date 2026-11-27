@@ -1,22 +1,19 @@
-# Caddy interception
+# Built-in TLS interception
 
-This example routes the cache and results service hostnames used by a self-hosted runner to `gha-cache-server` without changing a workflow.
-It uses Caddy for TLS termination and DNS interception for the runner.
+This example routes the cache and results service hostnames used by a self-hosted runner to `gha-cache-server` without changing any workflow.
+`gha-cache-server` terminates TLS directly with its built-in local CA, handles GitHub Actions cache v1/v2 APIs against S3-compatible storage, and transparently forwards non-cache `results-receiver` traffic (logs, artifacts, etc.) to GitHub.
 
 ## Request flow
 
 ```text
-runner -> original cache/results hostname -> Caddy -> gha-cache-server -> SeaweedFS
+runner ──(HTTPS + local CA)──▶ gha-cache-server ──▶ SeaweedFS / S3 bucket (cache)
+                                    └─────────────▶ GitHub (logs, artifacts, etc.)
 ```
-
-The example deliberately replaces the incoming job Bearer token with a fixed internal token because the proxy currently authenticates control APIs with `AUTH_TOKEN`.
-This is not validation of `ACTIONS_RUNTIME_TOKEN`.
-Keep Caddy on a private network or require mTLS so an untrusted client cannot use the replacement token.
 
 ## Compose runner
 
-`compose.yaml` starts SeaweedFS, the Rust proxy, Caddy, and one ephemeral official GitHub Actions runner.
-The runner image is based on the pinned official runner image and adds the Caddy CA trust setup.
+`compose.yaml` starts SeaweedFS (so you can run `docker compose up` locally without preparing an external bucket), `gha-cache-server`, and one ephemeral official GitHub Actions runner.
+The runner image adds the generated local CA certificate to the system trust store and exports `NODE_EXTRA_CA_CERTS` / `SSL_CERT_FILE`.
 
 Create a repository or organization runner registration token, then start the example:
 
@@ -25,16 +22,10 @@ export RUNNER_URL=https://github.com/example/project
 export RUNNER_TOKEN=replace-with-a-runner-registration-token
 export RUNNER_NAME=gha-cache-interception
 export RUNNER_LABELS=gha-cache-interception
-export PUBLIC_URL=https://artifactcache.actions.githubusercontent.com
-export CACHE_PROXY_AUTH_TOKEN=replace-with-an-internal-cache-token
-export SEAWEEDFS_ACCESS_KEY_ID=admin
-export SEAWEEDFS_SECRET_ACCESS_KEY=secret
-export S3_BUCKET=gha-cache
-export S3_REGION=us-east-1
 docker compose -f examples/interception/compose.yaml up --build
 ```
 
-Set `RUNNER_LABELS` to `gha-cache-interception` and use that label in a workflow:
+Use the matching label in a workflow:
 
 ```yaml
 jobs:
@@ -54,50 +45,14 @@ Stop the stack and remove its volumes with:
 docker compose -f examples/interception/compose.yaml down -v
 ```
 
-## Caddy
-
-Use [`Caddyfile`](Caddyfile) and set the same token on Caddy and the Rust proxy:
-
-```sh
-export CACHE_PROXY_AUTH_TOKEN=change-this-internal-token
-```
-
-The Caddy site names must match the hostnames in the runner's `ACTIONS_CACHE_URL` and `ACTIONS_RESULTS_URL`.
-Those hostnames can differ between GitHub.com, GHES, and future service deployments.
-
-Set the proxy's public URL to a hostname routed to Caddy:
-
-```text
-PUBLIC_URL=https://artifactcache.actions.githubusercontent.com
-```
-
-The Caddy upstream name `gha-cache-server` must resolve to the Rust proxy on the Caddy network.
-
 ## DNS and certificates
 
-Resolve the intercepted hostnames to the Caddy address from the runner and every job container that runs cache actions:
+Resolve the intercepted hostnames to `gha-cache-server` from the runner (and any job containers that use cache actions):
 
 ```text
 10.10.0.5 artifactcache.actions.githubusercontent.com
 10.10.0.5 results-receiver.actions.githubusercontent.com
 ```
 
-`tls internal` creates a Caddy local CA.
-Persist Caddy's `/data` directory so the CA does not change after a restart.
-The Compose example copies the generated certificate into a readable runner volume.
-For a separately managed runner, copy the root certificate from the Caddy container and install it in the runner image:
-
-```sh
-docker cp caddy:/data/caddy/pki/authorities/local/root.crt ./caddy-root.crt
-```
-
-Set `NODE_EXTRA_CA_CERTS` when the Node runtime does not use the system trust store:
-
-```dockerfile
-COPY caddy-root.crt /usr/local/share/ca-certificates/caddy-root.crt
-RUN update-ca-certificates
-ENV NODE_EXTRA_CA_CERTS=/usr/local/share/ca-certificates/caddy-root.crt
-```
-
-Do not expose this Caddy listener to an untrusted network.
-The proxy's signed blob URLs use `PUBLIC_URL`, so that hostname must resolve to Caddy for `PUT`, `GET`, `HEAD`, and range requests as well.
+On startup, `gha-cache-server` generates and persists a local CA under `TLS_DATA_DIR` and writes the public root certificate to `TLS_CA_CERT_OUT` (`/runner-ca/root.crt`).
+Persist the `cache-tls` volume so the CA stays stable across restarts, and keep `gha-cache-server` on a private network.

@@ -70,7 +70,10 @@ curl -fsS http://localhost:8080/healthz
 
 | 変数 | 既定値 | 説明 |
 | --- | --- | --- |
-| `LISTEN_ADDR` | `0.0.0.0:8080` | listen address。 |
+| `LISTEN_ADDR` | `0.0.0.0:8080` | 平文 HTTP の listen address。 |
+| `TLS_LISTEN_ADDR` | 未設定 | 内蔵 TLS 終端と非キャッシュ `results-receiver` 通信の GitHub 中継を有効化（例: `0.0.0.0:443`）。 |
+| `TLS_CA_CERT_OUT` | 未設定 | 自動生成したローカル CA の公開証明書を書き出すパス（例: `/runner-ca/root.crt`）。 |
+| `TLS_DATA_DIR` | 未設定 | 生成したローカル CA の鍵・証明書を再起動後も保持するディレクトリ。 |
 | `MAX_CACHE_SIZE_BYTES` | `10737418240` | アーカイブと staging の最大サイズ（10 GiB）。 |
 | `MAX_TOTAL_CACHE_SIZE_BYTES` | `0`（無制限） | キャッシュ全体の総容量上限（バイト）。超過時は commit/finalize 時に最も古くアクセスされたエントリから自動で LRU 削除されます。 |
 
@@ -129,9 +132,8 @@ runner:
 
 ## Interception の例
 
-[`examples/interception/`](examples/interception/) に、Caddy、DNS interception、公式 runner の Compose example があります。
-intercept した hostname の TLS を終端し、job token を proxy 内部用の固定 token へ置き換えます。
-`ACTIONS_RUNTIME_TOKEN` の検証は行わないため、private network または mTLS と組み合わせてください。
+[`examples/interception/`](examples/interception/) に、`gha-cache-server` 内蔵の TLS 終端・ローカル CA 生成・`results-receiver` 中継・SeaweedFS・公式 runner を組み合わせた Compose example があります。
+プライベートネットワーク内で利用してください。
 
 ## API
 

@@ -3,9 +3,9 @@ services:
     image: chrislusf/seaweedfs:4.41
     command: ["mini", "-dir=/data"]
     environment:
-      AWS_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID}
-      AWS_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY}
-      S3_BUCKET: ${S3_BUCKET}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-local-access-key}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-local-secret-key}
+      S3_BUCKET: ${S3_BUCKET:-gha-cache}
     volumes:
       - seaweedfs-data:/data
     healthcheck:
@@ -17,69 +17,45 @@ services:
     networks:
       - cache
 
-  proxy:
+  gha-cache-server:
     build:
       context: ../..
       dockerfile: Dockerfile
     image: gha-cache-server:interception
     environment:
-      LISTEN_ADDR: 0.0.0.0:8080
-      PUBLIC_URL: ${PUBLIC_URL}
-      AUTH_TOKEN: ${CACHE_PROXY_AUTH_TOKEN}
-      S3_ENDPOINT: http://seaweedfs:8333
-      S3_BUCKET: ${S3_BUCKET}
-      S3_REGION: ${S3_REGION}
-      S3_ACCESS_KEY_ID: ${SEAWEEDFS_ACCESS_KEY_ID}
-      S3_SECRET_ACCESS_KEY: ${SEAWEEDFS_SECRET_ACCESS_KEY}
+      PUBLIC_URL: ${PUBLIC_URL:-https://artifactcache.actions.githubusercontent.com}
+      TLS_LISTEN_ADDR: 0.0.0.0:443
+      TLS_CA_CERT_OUT: /runner-ca/root.crt
+      TLS_DATA_DIR: /var/lib/gha-cache-server/tls
+      S3_ENDPOINT: ${S3_ENDPOINT:-http://seaweedfs:8333}
+      S3_BUCKET: ${S3_BUCKET:-gha-cache}
+      S3_REGION: ${S3_REGION:-us-east-1}
+      S3_ACCESS_KEY_ID: ${S3_ACCESS_KEY_ID:-local-access-key}
+      S3_SECRET_ACCESS_KEY: ${S3_SECRET_ACCESS_KEY:-local-secret-key}
+      MAX_TOTAL_CACHE_SIZE_BYTES: ${MAX_TOTAL_CACHE_SIZE_BYTES:-21474836480}
+    volumes:
+      - cache-tls:/var/lib/gha-cache-server/tls
+      - runner-ca:/runner-ca
+    healthcheck:
+      test: ["CMD", "gha-cache-server", "--healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 24
+      start_period: 3s
     depends_on:
       seaweedfs:
         condition: service_healthy
     networks:
       cache:
         aliases:
-          - gha-cache-server
-
-  caddy:
-    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
-    environment:
-      - CACHE_PROXY_AUTH_TOKEN
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy-data:/data
-      - caddy-config:/config
-    depends_on:
-      proxy:
-        condition: service_started
-    networks:
-      cache:
-        aliases:
           - artifactcache.actions.githubusercontent.com
           - results-receiver.actions.githubusercontent.com
-
-  caddy-ca:
-    image: caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        until [ -s /caddy-data/caddy/pki/authorities/local/root.crt ]; do
-          sleep 1
-        done
-        cp /caddy-data/caddy/pki/authorities/local/root.crt /runner-ca/root.crt
-        chmod 0444 /runner-ca/root.crt
-    volumes:
-      - caddy-data:/caddy-data:ro
-      - runner-ca:/runner-ca
-    depends_on:
-      caddy:
-        condition: service_started
-    networks:
-      - cache
 
   runner:
     build:
       context: .
       dockerfile: Dockerfile
-    image: gha-cache-interception-runner:2.336.0
+    image: gha-cache-interception-runner:2.338.2
     environment:
       - RUNNER_URL
       - RUNNER_TOKEN
@@ -88,18 +64,15 @@ services:
     volumes:
       - runner-ca:/runner-ca:ro
     depends_on:
-      caddy-ca:
-        condition: service_completed_successfully
-      proxy:
-        condition: service_started
+      gha-cache-server:
+        condition: service_healthy
     networks:
       - cache
     restart: "no"
 
 volumes:
   seaweedfs-data:
-  caddy-data:
-  caddy-config:
+  cache-tls:
   runner-ca:
 
 networks:
