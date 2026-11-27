@@ -9,17 +9,6 @@
 The proxy connects only to the configured S3 endpoint.
 It does not call the GitHub control plane or any upstream cache service, so cache operations do not consume GitHub API rate limits.
 
-## Features
-
-- GitHub Actions cache v1 REST endpoints.
-- GitHub Actions cache v2 Twirp endpoints with JSON and protobuf support.
-- Primary-key and restore-key matching with version isolation.
-- Azure Blob-compatible signed URLs for streaming archive upload and download.
-- Single-object uploads, Azure block uploads, block lists, `HEAD`, `GET`, and single-range downloads.
-- S3-persisted metadata and reservations that survive process restarts.
-- Bearer authentication for control APIs and expiring HMAC authentication for blob URLs.
-- Per-archive and per-reservation staging size limits.
-
 ## Requirements
 
 - Docker Engine.

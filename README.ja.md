@@ -9,17 +9,6 @@
 プロキシが接続する先は、設定した S3 エンドポイントだけです。
 GitHub の control plane や upstream の cache service へは接続しないため、キャッシュ操作で GitHub API のレート制限を消費しません。
 
-## 特徴
-
-- GitHub Actions cache v1 の REST endpoint に対応。
-- GitHub Actions cache v2 の Twirp endpoint に JSON と protobuf で対応。
-- プライマリキーと restore-key による検索、および version による分離。
-- Azure Blob 互換の署名付き URL によるアーカイブの streaming upload と download。
-- 単発 upload、Azure block upload、blocklist、`HEAD`、`GET`、単一 range download に対応。
-- metadata と予約状態を S3 に保存し、プロセス再起動後も復元。
-- control API は Bearer 認証、blob URL は期限付き HMAC 認証。
-- アーカイブ単位と予約単位の staging サイズ制限。
-
 ## Requirements
 
 - Docker Engine。
