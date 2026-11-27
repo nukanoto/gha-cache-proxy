@@ -153,28 +153,7 @@ Keep the listener on a private network.
 | `HEAD /artifacts/{token}` | Signed URL | Read archive metadata. |
 | `GET /artifacts/{token}` | Signed URL | Download an archive or a single range. |
 
-v2 JSON responses use protobuf `snake_case` field names such as `signed_upload_url`, `signed_download_url`, `matched_key`, and `entry_id` (matching GitHub's Twirp service).
-The JSON representation of the int64 `entry_id` is a string.
-The server accepts both `snake_case` and `lowerCamelCase` JSON request fields.
-
-## Operational boundaries
-
-- Use one server replica with one dedicated S3 bucket.
-- Metadata and reservations are stored in one `index.json` object protected by a process-local lock.
-- Automatic LRU eviction is enabled when `MAX_TOTAL_CACHE_SIZE_BYTES` is set; abandoned staging objects are not automatically cleaned up.
-- Cache misses return HTTP 204 for v1 and `ok: false` for v2.
-- Signed blob URLs expire and contain no S3 credentials.
-- Range support covers one `start-end` or open-ended range; suffix and multi-range requests are not supported.
-
 ## Build and validation
-
-Build the release image:
-
-```sh
-docker build -t gha-cache-server .
-```
-
-For a local Rust toolchain:
 
 ```sh
 cargo fmt --check

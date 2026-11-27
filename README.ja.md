@@ -153,29 +153,7 @@ runner:
 | `HEAD /artifacts/{token}` | 署名付き URL | archive metadata の取得。 |
 | `GET /artifacts/{token}` | 署名付き URL | archive または単一 range の download。 |
 
-v2 の JSON response は GitHub 本家の Twirp サービスに合わせて `signed_upload_url`、`signed_download_url`、`matched_key`、`entry_id` のような `snake_case` 名を使います。
-int64 である `entry_id` は JSON では文字列になります。
-JSON request は `snake_case` と `lowerCamelCase` の両方を受け付けます。
-
-## 運用上の境界
-
-- 1 個のサーバーと 1 個の専用 S3 bucket を使ってください。
-- metadata と予約状態は、process-local lock で保護した 1 個の `index.json` object に保存します。
-- `MAX_TOTAL_CACHE_SIZE_BYTES` を設定すると LRU による自動削除が有効になります。放棄された staging object の自動削除は提供しません。
-- cache miss は v1 では HTTP 204、v2 では `ok: false` で返します。
-- 署名付き blob URL は期限付きで、S3 credential を含みません。
-- Range は 1 個の `start-end` または open-ended range に対応します。
-  suffix range と multi-range request には対応しません。
-
 ## Build と検証
-
-release image を build します。
-
-```sh
-docker build -t gha-cache-server .
-```
-
-ローカルの Rust toolchain を使う場合は、以下を実行します。
 
 ```sh
 cargo fmt --check
