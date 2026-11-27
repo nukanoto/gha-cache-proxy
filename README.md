@@ -30,10 +30,9 @@ It does not call the GitHub control plane or any upstream cache service, so cach
 ## Installation
 
 `gha-cache-server` stores cache archives and metadata in any dedicated S3-compatible bucket.
-Build and start the server with your bucket credentials:
+Start the server with your bucket credentials:
 
 ```sh
-docker build -t gha-cache-server .
 docker run -d --name gha-cache-server \
   -p 8080:8080 \
   -e PUBLIC_URL=http://localhost:8080 \
@@ -43,7 +42,7 @@ docker run -d --name gha-cache-server \
   -e S3_REGION=us-east-1 \
   -e S3_ACCESS_KEY_ID=your-access-key \
   -e S3_SECRET_ACCESS_KEY=your-secret-key \
-  gha-cache-server
+  ghcr.io/nukanoto/gha-cache-server:latest
 ```
 
 Verify that the service is running:

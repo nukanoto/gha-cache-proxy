@@ -33,7 +33,6 @@ GitHub の control plane や upstream の cache service へは接続しないた
 利用する S3 バケットの接続情報を渡して起動します。
 
 ```sh
-docker build -t gha-cache-server .
 docker run -d --name gha-cache-server \
   -p 8080:8080 \
   -e PUBLIC_URL=http://localhost:8080 \
@@ -43,7 +42,7 @@ docker run -d --name gha-cache-server \
   -e S3_REGION=us-east-1 \
   -e S3_ACCESS_KEY_ID=your-access-key \
   -e S3_SECRET_ACCESS_KEY=your-secret-key \
-  gha-cache-server
+  ghcr.io/nukanoto/gha-cache-server:latest
 ```
 
 サービスの起動を確認します。
